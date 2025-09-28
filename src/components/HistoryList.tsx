@@ -19,9 +19,9 @@ const HistoryList: React.FC<HistoryListProps> = ({
   // Auto-scroll to the end when new renders are added
   useEffect(() => {
     if (historyListRef.current) {
-      const { scrollWidth, clientWidth } = historyListRef.current
-      if (scrollWidth > clientWidth) {
-        historyListRef.current.scrollTo(scrollWidth, 0)
+      const { scrollHeight, clientHeight } = historyListRef.current
+      if (scrollHeight > clientHeight) {
+        historyListRef.current.scrollTo(0, scrollHeight)
       }
     }
   }, [renders.length])
@@ -47,13 +47,15 @@ const HistoryList: React.FC<HistoryListProps> = ({
       <div
         className={[
           'flex-shrink-0',
-          'mt-4 border p-3 rounded',
-          'flex items-center justify-center w-full max-w-4xl',
-          'h-[116px]',
+          'border p-3 rounded',
+          'flex items-center justify-center w-[120px]',
+          'h-full',
           'text-gray-500'
         ].join(' ')}
       >
-        <p>No editing history yet. Start editing to see your changes here.</p>
+        <p className="text-xs text-center">
+          No editing history yet. Start editing to see your changes here.
+        </p>
       </div>
     )
   }
@@ -63,12 +65,12 @@ const HistoryList: React.FC<HistoryListProps> = ({
       ref={historyListRef}
       className={[
         'flex-shrink-0',
-        'mt-4 border p-3 rounded',
-        'flex items-left w-full max-w-4xl',
-        'space-y-0 flex-row space-x-5',
-        'scrollbar-thin scrollbar-thumb-black scrollbar-track-primary overflow-x-scroll',
+        'border p-3 rounded',
+        'flex flex-col w-[120px]',
+        'space-x-0 space-y-3',
+        'scrollbar-thin scrollbar-thumb-black scrollbar-track-primary overflow-y-auto',
+        'h-full'
       ].join(' ')}
-      style={{ height: '116px' }}
     >
       {HistoryItems}
     </div>
@@ -101,8 +103,8 @@ const HistoryItem: React.FC<HistoryItemProps> = React.memo(({
       <img
         src={render.src}
         alt={`Edit ${index + 1}`}
-        className="rounded-sm"
-        style={{ height: '90px' }}
+        className="rounded-sm w-full object-cover"
+        style={{ height: '60px' }}
         loading="lazy" // Optimize loading for better performance
       />
       <Button
@@ -125,7 +127,7 @@ const HistoryItem: React.FC<HistoryItemProps> = React.memo(({
         <div
           style={{
             color: '#fff',
-            fontSize: '12px',
+            fontSize: '10px',
             textAlign: 'center',
           }}
         >

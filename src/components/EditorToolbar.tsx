@@ -1,5 +1,5 @@
 import React from 'react'
-import { ArrowDownTrayIcon, EyeIcon } from '@heroicons/react/24/outline'
+import { ArrowDownTrayIcon } from '@heroicons/react/24/outline'
 import Button from './Button'
 import Slider from './Slider'
 import * as m from '../paraglide/messages'
@@ -7,23 +7,27 @@ import * as m from '../paraglide/messages'
 interface EditorToolbarProps {
   hasRenders: boolean
   brushSize: number
-  showOriginal: boolean
+  pendingMasksCount: number
+  showBatchButton: boolean
   onUndo: () => void
   onBrushSizeChange: (size: number) => void
   onBrushSizeStart: () => void
-  onToggleOriginal: () => void
   onDownload: () => void
+  onProcessBatch: () => void
+  onClearMarks: () => void
 }
 
 const EditorToolbar: React.FC<EditorToolbarProps> = ({
   hasRenders,
   brushSize,
-  showOriginal,
+  pendingMasksCount,
+  showBatchButton,
   onUndo,
   onBrushSizeChange,
   onBrushSizeStart,
-  onToggleOriginal,
   onDownload,
+  onProcessBatch,
+  onClearMarks,
 }) => {
   return (
     <div
@@ -59,6 +63,7 @@ const EditorToolbar: React.FC<EditorToolbarProps> = ({
         </Button>
       )}
 
+
       {/* Brush Size Slider */}
       <div className="flex-1 flex items-center justify-center">
         <Slider
@@ -71,14 +76,56 @@ const EditorToolbar: React.FC<EditorToolbarProps> = ({
         />
       </div>
 
-      {/* Show Original Button */}
-      <Button
-        primary={showOriginal}
-        icon={<EyeIcon className="w-6 h-6" />}
-        onUp={onToggleOriginal}
-      >
-        {m.original()}
-      </Button>
+
+      {/* Process All Button */}
+      {showBatchButton && (
+        <Button
+          primary
+          onClick={onProcessBatch}
+          className="bg-green-500 hover:bg-green-600 text-white"
+          icon={
+            <svg
+              className="w-6 h-6"
+              fill="none"
+              stroke="currentColor"
+              viewBox="0 0 24 24"
+            >
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                strokeWidth={2}
+                d="M5 13l4 4L19 7"
+              />
+            </svg>
+          }
+        >
+          {m.process_all()} ({pendingMasksCount})
+        </Button>
+      )}
+
+      {/* Clear Marks Button */}
+      {pendingMasksCount > 0 && (
+        <Button
+          onClick={onClearMarks}
+          icon={
+            <svg
+              className="w-6 h-6"
+              fill="none"
+              stroke="currentColor"
+              viewBox="0 0 24 24"
+            >
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                strokeWidth={2}
+                d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"
+              />
+            </svg>
+          }
+        >
+          {m.clear_marks()}
+        </Button>
+      )}
 
       {/* Download Button */}
       <Button

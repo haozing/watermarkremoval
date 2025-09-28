@@ -1,7 +1,10 @@
-import React, { useRef, useCallback, useMemo } from 'react'
-import { Squares2X2Icon } from '@heroicons/react/24/outline'
+import React, { useRef, useCallback, useMemo, useImperativeHandle, forwardRef } from 'react'
 import { useCanvasOptimization, useCanvasSize } from '../hooks/useCanvasOptimization'
 import { Line, drawLines } from '../types/canvas'
+
+export interface CanvasEditorRef {
+  draw: (index?: number) => void
+}
 
 interface CanvasEditorProps {
   context: CanvasRenderingContext2D | undefined
@@ -11,10 +14,11 @@ interface CanvasEditorProps {
   lines: Line[]
   brushSize: number
   showBrush: boolean
-  showOriginal: boolean
   separatorLeft: number
   isInpaintingLoading: boolean
   generateProgress: number
+  pendingMasks: Line[]
+  useSeparator: boolean
   onDraw: () => void
   onStartDrawing: () => void
   onStopDrawing: () => Promise<void>
@@ -25,7 +29,7 @@ interface CanvasEditorProps {
   setContext: (ctx: CanvasRenderingContext2D) => void
 }
 
-const CanvasEditor: React.FC<CanvasEditorProps> = ({
+const CanvasEditor = forwardRef<CanvasEditorRef, CanvasEditorProps>(({
   context,
   original,
   isOriginalLoaded,
@@ -33,10 +37,11 @@ const CanvasEditor: React.FC<CanvasEditorProps> = ({
   lines,
   brushSize,
   showBrush,
-  showOriginal,
   separatorLeft,
   isInpaintingLoading,
   generateProgress,
+  pendingMasks,
+  useSeparator,
   onDraw,
   onStartDrawing,
   onStopDrawing,
@@ -45,21 +50,20 @@ const CanvasEditor: React.FC<CanvasEditorProps> = ({
   setSeparatorLeft,
   setUseSeparator,
   setContext,
-}) => {
+}, ref) => {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const canvasDiv = useRef<HTMLDivElement>(null)
-  const separatorRef = useRef<HTMLDivElement>(null)
-  const originalImgRef = useRef<HTMLDivElement>(null)
   const modalRef = useRef<HTMLDivElement>(null)
 
-  // Canvas optimization hooks
+  // Canvas optimization hooks - 修复后重新启用
   const canvasOptimization = useCanvasOptimization(canvasRef, {
     throttleMs: 16, // 60fps
-    enableBatching: true,
-    enableOffscreenCanvas: true
+    enableBatching: false, // 禁用batching避免复杂依赖
+    enableOffscreenCanvas: false // 禁用offscreen避免ref依赖问题
   })
 
-  const { dimensions } = useCanvasSize(canvasRef, canvasDiv)
+  // 暂时禁用useCanvasSize来测试无限重新渲染问题
+  // const { dimensions } = useCanvasSize(canvasRef, canvasDiv)
 
   // Optimized draw function
   const optimizedDraw = useCallback(
@@ -74,21 +78,29 @@ const CanvasEditor: React.FC<CanvasEditorProps> = ({
         const currRender = renders[index === -1 ? renders.length - 1 : index] ?? original
         const { canvas } = context
 
+        // 检查图像是否已完全加载（React 18时序修复）
+        if (!currRender.width || !currRender.height) {
+          return
+        }
+
+        // 采用old项目的简单直接方式计算Canvas尺寸
         const divWidth = canvasDiv.current!.offsetWidth
         const divHeight = canvasDiv.current!.offsetHeight
 
-        // Calculate aspect ratio
+        // 计算宽高比
         const imgAspectRatio = currRender.width / currRender.height
         const divAspectRatio = divWidth / divHeight
 
         let canvasWidth: number
         let canvasHeight: number
 
-        // Scale based on aspect ratio
+        // 比较宽高比以决定如何缩放（采用old项目的逻辑）
         if (divAspectRatio > imgAspectRatio) {
+          // div 较宽，基于高度缩放
           canvasHeight = divHeight
           canvasWidth = currRender.width * (divHeight / currRender.height)
         } else {
+          // div 较窄，基于宽度缩放
           canvasWidth = divWidth
           canvasHeight = currRender.height * (divWidth / currRender.width)
         }
@@ -104,10 +116,26 @@ const CanvasEditor: React.FC<CanvasEditorProps> = ({
 
         const currentLine = lines[lines.length - 1]
         drawLines(context, [currentLine])
+
+        // 额外绘制所有待处理的mask（用不同颜色区分）
+        if (pendingMasks.length > 0) {
+          const tempContext = context
+          tempContext.save()
+          tempContext.globalAlpha = 0.6 // 半透明
+          pendingMasks.forEach(mask => {
+            drawLines(tempContext, [mask], 'rgba(255, 255, 0, 0.8)') // 黄色半透明
+          })
+          tempContext.restore()
+        }
       }, 2) // Priority 2 for draw operations
     },
-    [context, lines, original, renders, canvasOptimization]
+    [context, lines, original, renders, canvasOptimization, pendingMasks]
   )
+
+  // Expose draw method to parent component
+  useImperativeHandle(ref, () => ({
+    draw: optimizedDraw
+  }), [optimizedDraw])
 
   // Memoize scale factor for performance
   const scaleFactor = useMemo(() => {
@@ -119,9 +147,96 @@ const CanvasEditor: React.FC<CanvasEditorProps> = ({
     const canvasHeight = context.canvas.height
 
     return Math.min(divWidth / canvasWidth, divHeight / canvasHeight)
-  }, [context?.canvas.width, context?.canvas.height, dimensions])
+  }, [context?.canvas.width, context?.canvas.height]) // 移除dimensions依赖
 
   const scaledBrushSize = useMemo(() => brushSize * scaleFactor, [brushSize, scaleFactor])
+
+  // 鼠标事件处理
+  React.useEffect(() => {
+    const canvas = context?.canvas
+    if (!canvas) {
+      return
+    }
+
+    const onMouseMove = (ev: MouseEvent) => {
+      onBrushMove(ev)
+    }
+
+    const onPaint = (px: number, py: number) => {
+      const currLine = lines[lines.length - 1]
+      currLine.pts.push({ x: px, y: py })
+      optimizedDraw()
+    }
+
+    const onMouseDrag = (ev: MouseEvent) => {
+      const px = ev.offsetX - canvas.offsetLeft
+      const py = ev.offsetY - canvas.offsetTop
+      onPaint(px, py)
+    }
+
+    const onPointerUp = async () => {
+      if (!original.src) {
+        return
+      }
+      if (lines.slice(-1)[0]?.pts.length === 0) {
+        return
+      }
+
+      canvas.removeEventListener('mousemove', onMouseDrag)
+      canvas.removeEventListener('mouseup', onPointerUp)
+
+      await onStopDrawing()
+    }
+
+    const onTouchMove = (ev: TouchEvent) => {
+      ev.preventDefault()
+      ev.stopPropagation()
+      const currLine = lines[lines.length - 1]
+      const coords = canvas.getBoundingClientRect()
+      currLine.pts.push({
+        x: ev.touches[0].clientX - coords.x,
+        y: ev.touches[0].clientY - coords.y,
+      })
+      optimizedDraw()
+    }
+
+    const onPointerStart = () => {
+      if (!original.src) {
+        return
+      }
+      const currLine = lines[lines.length - 1]
+      currLine.size = brushSize
+      canvas.addEventListener('mousemove', onMouseDrag)
+      canvas.addEventListener('mouseup', onPointerUp)
+      onStartDrawing()
+    }
+
+    canvas.addEventListener('mousemove', onMouseMove)
+    canvas.addEventListener('touchstart', onPointerStart)
+    canvas.addEventListener('touchmove', onTouchMove)
+    canvas.addEventListener('touchend', onPointerUp)
+    canvas.onmousedown = onPointerStart
+
+    return () => {
+      canvas.removeEventListener('mousemove', onMouseDrag)
+      canvas.removeEventListener('mousemove', onMouseMove)
+      canvas.removeEventListener('mouseup', onPointerUp)
+      canvas.removeEventListener('touchstart', onPointerStart)
+      canvas.removeEventListener('touchmove', onTouchMove)
+      canvas.removeEventListener('touchend', onPointerUp)
+      canvas.onmousedown = null
+    }
+  }, [
+    context,
+    lines,
+    original.src,
+    brushSize,
+    onBrushMove,
+    onStartDrawing,
+    onStopDrawing,
+    optimizedDraw
+  ])
+
 
   return (
     <div
@@ -135,7 +250,7 @@ const CanvasEditor: React.FC<CanvasEditorProps> = ({
           style={showBrush ? { cursor: 'none' } : {}}
           ref={r => {
             if (r) {
-              canvasRef.current = r
+              ;(canvasRef as React.MutableRefObject<HTMLCanvasElement | null>).current = r
               if (!context) {
                 const ctx = r.getContext('2d')
                 if (ctx) {
@@ -146,66 +261,6 @@ const CanvasEditor: React.FC<CanvasEditorProps> = ({
           }}
         />
 
-        {/* Original image overlay */}
-        <div
-          className={[
-            'absolute top-0 right-0 pointer-events-none',
-            showOriginal ? '' : 'overflow-hidden',
-          ].join(' ')}
-          style={{
-            width: showOriginal ? `${context?.canvas.width}px` : '0px',
-            height: context?.canvas.height,
-            transitionProperty: 'width, height',
-            transitionTimingFunction: 'cubic-bezier(0.4, 0, 0.2, 1)',
-            transitionDuration: '300ms',
-          }}
-          ref={originalImgRef}
-        >
-          {/* Separator */}
-          <div
-            className={[
-              'absolute top-0 right-0 pointer-events-none z-10',
-              'bg-primary w-1',
-              'flex items-center justify-center',
-              'separator',
-            ].join(' ')}
-            style={{
-              left: `${separatorLeft}px`,
-              height: context?.canvas.height,
-              transitionProperty: 'width, height',
-              transitionTimingFunction: 'cubic-bezier(0.4, 0, 0.2, 1)',
-              transitionDuration: '300ms',
-            }}
-          >
-            <span className="absolute left-1 bottom-0 p-1 bg-opacity-25 bg-black rounded text-white select-none">
-              original
-            </span>
-            <div
-              className="absolute py-2 px-1 rounded-md pointer-events-auto bg-primary"
-              style={{ cursor: 'ew-resize' }}
-              ref={separatorRef}
-            >
-              <Squares2X2Icon
-                className="w-5 h-5"
-                style={{ cursor: 'ew-resize' }}
-              />
-            </div>
-          </div>
-
-          <img
-            className="absolute right-0"
-            src={original.src}
-            alt="original"
-            width={`${context?.canvas.width}px`}
-            height={`${context?.canvas.height}px`}
-            style={{
-              width: `${context?.canvas.width}px`,
-              height: `${context?.canvas.height}px`,
-              maxWidth: 'none',
-              clipPath: `inset(0 0 0 ${separatorLeft}px)`,
-            }}
-          />
-        </div>
 
         {/* Loading overlay */}
         {isInpaintingLoading && (
@@ -225,6 +280,6 @@ const CanvasEditor: React.FC<CanvasEditorProps> = ({
       </div>
     </div>
   )
-}
+})
 
 export default React.memo(CanvasEditor)

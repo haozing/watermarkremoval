@@ -69,13 +69,17 @@ export function useImage(
   useEffect(() => {
     const newImage = new Image()
     newImage.onload = () => {
+      setImage(newImage)  // 只有在onload时才设置image，确保width/height已加载
       setIsLoaded(true)
     }
+    newImage.onerror = (error) => {
+      console.error('useImage: Image load failed', error)
+    }
     newImage.src = URL.createObjectURL(file)
-    setImage(newImage)
 
     return () => {
       newImage.onload = null
+      newImage.onerror = null
     }
   }, [file])
 
