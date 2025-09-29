@@ -5,6 +5,11 @@ import { ensureModel } from './cache'
 import { getCapabilities } from './util'
 import memoryManager, { withMatCleanup } from '../utils/memoryManager'
 import type { modelType } from './cache'
+
+// Global ort types (loaded dynamically via util.ts)
+declare global {
+  const ort: typeof import('onnxruntime-web')
+}
 // ort.env.debug = true
 // ort.env.logLevel = 'verbose'
 // ort.env.webgpu.profilingMode = 'default'
@@ -55,7 +60,8 @@ function markProcess(img: any): Uint8Array {
     const channelData = channels.get(0).data // 获取单个通道的数据
     for (let h = 0; h < H; h++) {
       for (let w = 0; w < W; w++) {
-        chwArray[c * H * W + h * W + w] = (channelData[h * W + w] !== 255) ? 255 : 0
+        chwArray[c * H * W + h * W + w] =
+          channelData[h * W + w] !== 255 ? 255 : 0
       }
     }
   }
@@ -117,7 +123,11 @@ const processMark = withMatCleanup(
     })
   }
 )
-function postProcess(uint8Data: Uint8Array, width: number, height: number): number[] {
+function postProcess(
+  uint8Data: Uint8Array,
+  width: number,
+  height: number
+): number[] {
   const chwToHwcData = []
   const size = width * height
 
@@ -200,25 +210,58 @@ const resizeMark = (
     resizedImage.src = resizedImageUrl
   })
 }
-let model: any = null
+
+// Session creation utility - reusable across batch processing
+export async function createInpaintSession(): Promise<ort.InferenceSession> {
+  console.time('sessionCreate')
+  const capabilities = await getCapabilities()
+  configEnv(capabilities)
+  const modelBuffer = await ensureModel('inpaint')
+
+  // Prioritize webgpu for better memory efficiency, fallback to wasm
+  const executionProviders: string[] = capabilities.webgpu
+    ? ['webgpu', 'wasm']
+    : ['wasm']
+
+  console.log('Creating session with execution providers:', executionProviders)
+
+  const session = await ort.InferenceSession.create(modelBuffer, {
+    executionProviders,
+    graphOptimizationLevel: 'all',
+    // Conservative threading for memory stability
+    intraOpNumThreads: 1,
+    // Additional memory optimization options
+    enableCpuMemArena: false,
+    enableMemPattern: false,
+  })
+  console.timeEnd('sessionCreate')
+  return session
+}
+
+// Cache for backward compatibility (single image usage)
+let cachedSession: ort.InferenceSession | null = null
+
+// Legacy function for backward compatibility
 export default async function inpaint(
   imageFile: File | HTMLImageElement,
   maskBase64: string
 ): Promise<string | null> {
-  console.time('sessionCreate')
+  // Create session if not already cached
+  if (!cachedSession) {
+    cachedSession = await createInpaintSession()
+  }
+  return inpaintWithSession(imageFile, maskBase64, cachedSession)
+}
 
+// New function that accepts external session for batch processing
+export async function inpaintWithSession(
+  imageFile: File | HTMLImageElement,
+  maskBase64: string,
+  session: ort.InferenceSession
+): Promise<string | null> {
   // Log memory stats before processing
   const memStatsStart = memoryManager.getStats()
   console.log('Memory stats before processing:', memStatsStart)
-  if (!model) {
-    const capabilities = await getCapabilities()
-    configEnv(capabilities)
-    const modelBuffer = await ensureModel('inpaint')
-    model = await ort.InferenceSession.create(modelBuffer, {
-      executionProviders: [capabilities.webgpu ? 'webgpu' : 'wasm'],
-    })
-  }
-  console.timeEnd('sessionCreate')
   console.time('preProcess')
 
   const [originalImg, originalMark] = await Promise.all([
@@ -252,18 +295,18 @@ export default async function inpaint(
   const Feed: {
     [key: string]: any
   } = {
-    [model.inputNames[0]]: imageTensor,
-    [model.inputNames[1]]: maskTensor,
+    [session.inputNames[0]]: imageTensor,
+    [session.inputNames[1]]: maskTensor,
   }
 
   console.timeEnd('preProcess')
 
   console.time('run')
-  const results = await model.run(Feed)
+  const results = await session.run(Feed)
   console.timeEnd('run')
 
   console.time('postProcess')
-  const outsTensor = results[model.outputNames[0]]
+  const outsTensor = results[session.outputNames[0]]
   const chwToHwcData = postProcess(
     outsTensor.data,
     originalImg.width,

@@ -9,11 +9,13 @@ interface EditorToolbarProps {
   brushSize: number
   pendingMasksCount: number
   showBatchButton: boolean
+  remainingFilesCount: number
   onUndo: () => void
   onBrushSizeChange: (size: number) => void
   onBrushSizeStart: () => void
   onDownload: () => void
   onProcessBatch: () => void
+  onProcessRemaining: () => void
   onClearMarks: () => void
 }
 
@@ -22,11 +24,13 @@ const EditorToolbar: React.FC<EditorToolbarProps> = ({
   brushSize,
   pendingMasksCount,
   showBatchButton,
+  remainingFilesCount,
   onUndo,
   onBrushSizeChange,
   onBrushSizeStart,
   onDownload,
   onProcessBatch,
+  onProcessRemaining,
   onClearMarks,
 }) => {
   return (
@@ -63,7 +67,6 @@ const EditorToolbar: React.FC<EditorToolbarProps> = ({
         </Button>
       )}
 
-
       {/* Brush Size Slider */}
       <div className="flex-1 flex items-center justify-center">
         <Slider
@@ -76,8 +79,7 @@ const EditorToolbar: React.FC<EditorToolbarProps> = ({
         />
       </div>
 
-
-      {/* Process All Button */}
+      {/* Process All Button - 当前图片单张处理 */}
       {showBatchButton && (
         <Button
           primary
@@ -103,8 +105,34 @@ const EditorToolbar: React.FC<EditorToolbarProps> = ({
         </Button>
       )}
 
+      {/* Process Remaining Button - 批量处理剩余图片 */}
+      {remainingFilesCount > 0 && pendingMasksCount > 0 && (
+        <Button
+          primary
+          onClick={onProcessRemaining}
+          className="bg-blue-500 hover:bg-blue-600 text-white"
+          icon={
+            <svg
+              className="w-6 h-6"
+              fill="none"
+              stroke="currentColor"
+              viewBox="0 0 24 24"
+            >
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                strokeWidth={2}
+                d="M9 5H7a2 2 0 00-2 2v10a2 2 0 002 2h8a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2"
+              />
+            </svg>
+          }
+        >
+          {m.process_remaining()} {remainingFilesCount} 张图片
+        </Button>
+      )}
+
       {/* Clear Marks Button */}
-      {pendingMasksCount > 0 && (
+      {(pendingMasksCount > 0 || remainingFilesCount > 0) && (
         <Button
           onClick={onClearMarks}
           icon={

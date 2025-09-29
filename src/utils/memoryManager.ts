@@ -11,7 +11,7 @@ class MemoryManager {
   private readonly maxPoolSize = 20
   private readonly cleanupInterval = 30000 // 30 seconds
   private cleanupTimer: number | null = null
-  private memoryWarningThreshold = 100 * 1024 * 1024 // 100MB
+  private memoryWarningThreshold = 50 * 1024 * 1024 // 50MB (降低阈值)
 
   constructor() {
     this.startCleanupTimer()
@@ -24,9 +24,10 @@ class MemoryManager {
   getMat(rows?: number, cols?: number, type?: number): any {
     // Try to find an unused Mat with compatible dimensions
     const compatible = this.matPool.find(
-      item => !item.inUse &&
-      (!rows || item.mat.rows === rows) &&
-      (!cols || item.mat.cols === cols)
+      item =>
+        !item.inUse &&
+        (!rows || item.mat.rows === rows) &&
+        (!cols || item.mat.cols === cols)
     )
 
     if (compatible) {
@@ -43,7 +44,7 @@ class MemoryManager {
       this.matPool.push({
         mat,
         inUse: true,
-        lastUsed: Date.now()
+        lastUsed: Date.now(),
       })
     }
 
@@ -85,7 +86,7 @@ class MemoryManager {
     const maxAge = 60000 // 1 minute
 
     this.matPool = this.matPool.filter(item => {
-      if (!item.inUse && (now - item.lastUsed) > maxAge) {
+      if (!item.inUse && now - item.lastUsed > maxAge) {
         this.safeDeletMat(item.mat)
         return false
       }
@@ -115,13 +116,19 @@ class MemoryManager {
           console.warn('High memory usage detected:', {
             used: Math.round(memInfo.usedJSHeapSize / 1024 / 1024) + 'MB',
             total: Math.round(memInfo.totalJSHeapSize / 1024 / 1024) + 'MB',
-            poolSize: this.matPool.length
+            poolSize: this.matPool.length,
           })
 
           // Force cleanup when memory is high
           this.forceCleanup()
+
+          // 触发垃圾回收（如果可用）
+          if (window.gc) {
+            console.log('Triggering garbage collection')
+            window.gc()
+          }
         }
-      }, 10000) // Check every 10 seconds
+      }, 5000) // Check every 5 seconds (更频繁检查)
     }
   }
 
@@ -151,13 +158,15 @@ class MemoryManager {
     const stats = {
       poolSize: this.matPool.length,
       inUse,
-      available: this.matPool.length - inUse
+      available: this.matPool.length - inUse,
     }
 
     if ('memory' in performance) {
       return {
         ...stats,
-        memoryUsage: Math.round((performance as any).memory.usedJSHeapSize / 1024 / 1024)
+        memoryUsage: Math.round(
+          (performance as any).memory.usedJSHeapSize / 1024 / 1024
+        ),
       }
     }
 
@@ -217,10 +226,14 @@ export function withMatCleanup<T extends any[], R>(
  * Auto-cleanup decorator for functions that work with Mats
  */
 export function autoCleanup(matsCreated: string[]) {
-  return function(target: any, propertyName: string, descriptor: PropertyDescriptor) {
+  return function (
+    target: any,
+    propertyName: string,
+    descriptor: PropertyDescriptor
+  ) {
     const method = descriptor.value
 
-    descriptor.value = function(...args: any[]) {
+    descriptor.value = function (...args: any[]) {
       const createdMats: any[] = []
 
       try {

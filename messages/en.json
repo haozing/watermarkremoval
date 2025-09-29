@@ -9,6 +9,8 @@
 	"download": "Download",
 	"undo": "Undo",
 	"process_all": "Process All",
+	"process_remaining": "Process Remaining",
+	"processing_image": "Processing image {current}/{total}",
 	"clear_marks": "Clear Marks",
 	"inpaint_model_download_message": "Need to download a 30MB model file, please wait patiently..."
 }

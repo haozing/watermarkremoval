@@ -9,6 +9,8 @@
 	"download": "下载",
 	"undo": "撤销",
 	"process_all": "处理全部",
+	"process_remaining": "处理剩余",
+	"processing_image": "正在处理第 {current}/{total} 张图片",
 	"clear_marks": "清除标记",
 	"inpaint_model_download_message": "注意需要连接国际互联网，需要下载一次30MB大小模型文件,耐心等待。。。"
 }
