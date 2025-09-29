@@ -8,5 +8,7 @@
 	"original": "Original",
 	"download": "Download",
 	"undo": "Undo",
+	"process_all": "Process All",
+	"clear_marks": "Clear Marks",
 	"inpaint_model_download_message": "Need to download a 30MB model file, please wait patiently..."
 }
