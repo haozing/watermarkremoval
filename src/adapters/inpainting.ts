@@ -5,14 +5,12 @@ import { ensureModel } from './cache'
 import { getCapabilities } from './util'
 import memoryManager, { withMatCleanup } from '../utils/memoryManager'
 import type { modelType } from './cache'
+import { log } from '../utils/logger'
 
 // Global ort types (loaded dynamically via util.ts)
 declare global {
   const ort: typeof import('onnxruntime-web')
 }
-// ort.env.debug = true
-// ort.env.logLevel = 'verbose'
-// ort.env.webgpu.profilingMode = 'default'
 
 function loadImage(url: string): Promise<HTMLImageElement> {
   return new Promise((resolve, reject) => {
@@ -38,7 +36,6 @@ function imgProcess(img: any): Uint8Array {
     for (let h = 0; h < H; h++) {
       for (let w = 0; w < W; w++) {
         chwArray[c * H * W + h * W + w] = channelData[h * W + w]
-        // chwArray[c * H * W + h * W + w] = channelData[h * W + w]
       }
     }
   }
@@ -179,7 +176,7 @@ function configEnv(capabilities: ImageProcessingCapabilities): void {
     }
     ort.env.wasm.proxy = true
   }
-  console.log('env', ort.env.wasm)
+  log.debug('ort.env.wasm', ort.env.wasm)
 }
 const resizeMark = (
   image: HTMLImageElement,
@@ -223,7 +220,7 @@ export async function createInpaintSession(): Promise<ort.InferenceSession> {
     ? ['webgpu', 'wasm']
     : ['wasm']
 
-  console.log('Creating session with execution providers:', executionProviders)
+  log.info('Creating session with execution providers', executionProviders)
 
   const session = await ort.InferenceSession.create(modelBuffer, {
     executionProviders,
@@ -261,7 +258,7 @@ export async function inpaintWithSession(
 ): Promise<string | null> {
   // Log memory stats before processing
   const memStatsStart = memoryManager.getStats()
-  console.log('Memory stats before processing:', memStatsStart)
+  log.debug('Memory stats before processing', memStatsStart)
   console.time('preProcess')
 
   const [originalImg, originalMark] = await Promise.all([
@@ -317,13 +314,13 @@ export async function inpaintWithSession(
     originalImg.width,
     originalImg.height
   )
-  console.log(imageData, 'imageData')
+  log.debug('imageData', imageData)
   const result = imageDataToDataURL(imageData)
   console.timeEnd('postProcess')
 
   // Log memory stats after processing
   const memStatsEnd = memoryManager.getStats()
-  console.log('Memory stats after processing:', memStatsEnd)
+  log.debug('Memory stats after processing', memStatsEnd)
 
   return result
 }

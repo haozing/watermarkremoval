@@ -9,41 +9,51 @@ import { useCallback, useEffect, useState, useRef, useMemo } from 'react'
 import { useWindowSize } from 'react-use'
 import inpaint from './adapters/inpainting'
 import Button from './components/Button'
-import Slider from './components/Slider'
-import { downloadImage, loadImage, useImage } from './utils'
-import Progress from './components/Progress'
+import {
+  downloadImage,
+  loadImage,
+  useImage,
+  getProcessedFileName,
+} from './utils'
 import { useErrorNotification } from './components/ErrorNotification'
 import { Line, drawLines } from './types/canvas'
+import {
+  convertLineToRelative,
+  convertLinesToAbsolute,
+  logCoordinateConversion,
+} from './utils/coordinateTransform'
+import { createMaskCanvasFromImage } from './utils/maskUtils'
+import { createMaskVisualization } from './debug/maskVisualizer'
 import HistoryList from './components/HistoryList'
 import CanvasEditor, { CanvasEditorRef } from './components/CanvasEditor'
 import EditorToolbar from './components/EditorToolbar'
 import * as m from './paraglide/messages'
+import {
+  DEFAULT_BRUSH_SIZE,
+  BRUSH_HIDE_TIMEOUT,
+  FILENAME_SUFFIX_SINGLE,
+} from './constants'
+import { log } from './utils/logger'
 
 interface EditorProps {
   file: File
   remainingFiles?: File[]
+  totalFilesCount?: number // 总文件数
   onProcessRemaining?: (
     templateMasks: Line[],
-    displayCanvasSize?: { width: number; height: number }
+    includeCurrentFile?: boolean // 是否包含当前文件
   ) => void
-  onVisualizeMask?: (
-    file: File,
-    masks: Line[],
-    filename: string,
-    debugInfo?: any
-  ) => Promise<void>
 }
 
-const BRUSH_HIDE_ON_SLIDER_CHANGE_TIMEOUT = 2000
 export default function Editor(props: EditorProps) {
   const {
     file,
     remainingFiles = [],
+    totalFilesCount = 1,
     onProcessRemaining,
-    onVisualizeMask,
   } = props
   const { showError } = useErrorNotification()
-  const [brushSize, setBrushSize] = useState(40)
+  const [brushSize, setBrushSize] = useState(DEFAULT_BRUSH_SIZE)
   const [original, isOriginalLoaded] = useImage(file)
   const [renders, setRenders] = useState<HTMLImageElement[]>([])
   const [context, setContext] = useState<CanvasRenderingContext2D>()
@@ -56,6 +66,7 @@ export default function Editor(props: EditorProps) {
   const [generateProgress, setGenerateProgress] = useState(0)
   const [pendingMasks, setPendingMasks] = useState<Line[]>([])
   const [showBatchButton, setShowBatchButton] = useState(false)
+  const [currentImageProcessed, setCurrentImageProcessed] = useState(false) // 当前图片是否已被单独处理
   const modalRef = useRef(null)
   const [useSeparator, setUseSeparator] = useState(false)
   const [separatorLeft, setSeparatorLeft] = useState(0)
@@ -158,17 +169,13 @@ export default function Editor(props: EditorProps) {
     }
   }, [])
 
-  // 将显示canvas坐标转换为实际图像坐标
-  const convertMasksToImageCoordinates = useCallback(
+  // 将相对坐标转换为实际图像的绝对坐标
+  const convertRelativeMasksToAbsolute = useCallback(
     async (
-      displayMasks: Line[],
+      relativeMasks: Line[],
       targetFile: File | HTMLImageElement
     ): Promise<Line[]> => {
-      if (!context?.canvas.width || !context?.canvas.height) {
-        throw new Error('Display canvas context not available')
-      }
-
-      // 获取实际图像尺寸
+      // 获取目标图像尺寸
       let imageWidth: number, imageHeight: number
       if (targetFile instanceof File) {
         const bitmap = await createImageBitmap(targetFile)
@@ -180,96 +187,37 @@ export default function Editor(props: EditorProps) {
         imageHeight = targetFile.naturalHeight
       }
 
-      // 计算缩放比例 (实际图像尺寸 / 显示canvas尺寸)
-      const scaleX = imageWidth / context.canvas.width
-      const scaleY = imageHeight / context.canvas.height
+      // ✅ 使用工具函数转换
+      const absoluteMasks = convertLinesToAbsolute(relativeMasks, {
+        width: imageWidth,
+        height: imageHeight,
+      })
 
-      console.log('=== 单张处理坐标转换 ===', {
-        displayCanvasSize: {
-          width: context.canvas.width,
-          height: context.canvas.height,
+      // ✅ 使用统一的日志函数
+      logCoordinateConversion('Editor.convertRelativeMasksToAbsolute', {
+        imageSize: { width: imageWidth, height: imageHeight },
+        originalLine: {
+          firstPt: relativeMasks[0]?.pts[0],
+          size: relativeMasks[0]?.size,
         },
-        actualImageSize: { width: imageWidth, height: imageHeight },
-        scaleFactors: { x: scaleX, y: scaleY },
+        convertedLine: {
+          firstPt: absoluteMasks[0]?.pts[0],
+          size: absoluteMasks[0]?.size,
+        },
       })
 
-      // 转换坐标
-      const scaledMasks = displayMasks.map(mask => ({
-        ...mask,
-        pts: mask.pts.map(pt => ({
-          x: pt.x * scaleX,
-          y: pt.y * scaleY,
-        })),
-      }))
-
-      console.log('单张处理坐标转换详情:', {
-        originalFirst: displayMasks[0]?.pts[0],
-        scaledFirst: scaledMasks[0]?.pts[0],
-        scaleFactors: { x: scaleX, y: scaleY },
-      })
-
-      return scaledMasks
+      return absoluteMasks
     },
-    [context?.canvas.width, context?.canvas.height]
+    [] // 不再依赖context
   )
 
-  // 创建适配实际图像尺寸的mask canvas
-  const createImageSizedMask = useCallback(
-    async (
-      masks: Line[],
-      targetFile: File | HTMLImageElement
-    ): Promise<HTMLCanvasElement> => {
-      // 获取实际图像尺寸
-      let imageWidth: number, imageHeight: number
-      if (targetFile instanceof File) {
-        const bitmap = await createImageBitmap(targetFile)
-        imageWidth = bitmap.width
-        imageHeight = bitmap.height
-        bitmap.close?.()
-      } else {
-        imageWidth = targetFile.naturalWidth
-        imageHeight = targetFile.naturalHeight
-      }
+  // 记录mask处理开始的调试信息
+  const logMaskProcessingStart = useCallback(
+    (pendingMasks: Line[], currentImage: File | HTMLImageElement) => {
+      log.debug('单张处理开始', { maskCount: pendingMasks.length })
 
-      const canvas = document.createElement('canvas')
-      canvas.width = imageWidth
-      canvas.height = imageHeight
-      const ctx = canvas.getContext('2d')!
-
-      // 设置背景为黑色
-      ctx.fillStyle = 'black'
-      ctx.fillRect(0, 0, canvas.width, canvas.height)
-
-      // 绘制所有mask到同一个canvas（白色）
-      masks.forEach(mask => {
-        if (mask.pts.length > 0) {
-          drawLines(ctx, [mask], 'white')
-        }
-      })
-
-      console.log('=== 单张处理mask canvas创建 ===', {
-        canvasSize: { width: canvas.width, height: canvas.height },
-        masksCount: masks.length,
-      })
-
-      return canvas
-    },
-    []
-  )
-
-  // 批量处理函数
-  const processBatch = useCallback(async () => {
-    if (pendingMasks.length === 0) return
-
-    const loading = onloading()
-    setShowBatchButton(false)
-
-    try {
-      console.log('=== 单张处理开始 ===', { maskCount: pendingMasks.length })
-
-      // 详细记录pendingMasks信息
-      console.log(
-        '单张处理 - pendingMasks详情:',
+      log.debug(
+        '单张处理 - pendingMasks详情',
         pendingMasks.map((mask, index) => ({
           index,
           ptsCount: mask.pts.length,
@@ -279,9 +227,7 @@ export default function Editor(props: EditorProps) {
         }))
       )
 
-      // 处理当前图像
-      const currentImage = renders.slice(-1)[0] ?? file
-      console.log('单张处理 - 图像信息:', {
+      log.debug('单张处理 - 图像信息', {
         imageType:
           currentImage instanceof HTMLImageElement
             ? 'HTMLImageElement'
@@ -296,84 +242,126 @@ export default function Editor(props: EditorProps) {
               }
             : 'File object',
       })
+    },
+    []
+  )
 
-      // 转换显示canvas坐标到实际图像坐标
-      const scaledMasks = await convertMasksToImageCoordinates(
-        pendingMasks,
+  // 转换坐标并创建mask
+  const convertAndCreateMask = useCallback(
+    async (
+      pendingMasks: Line[],
+      currentImage: File | HTMLImageElement,
+      convertFn: (
+        masks: Line[],
+        image: File | HTMLImageElement
+      ) => Promise<Line[]>
+    ) => {
+      const absoluteMasks = await convertFn(pendingMasks, currentImage)
+
+      log.debug('单张处理 - 使用相对坐标转换', {
+        pendingMasksRelative: pendingMasks.map((mask, idx) => ({
+          index: idx,
+          firstPt: mask.pts[0],
+          size: mask.size,
+        })),
+        absoluteMasksConverted: absoluteMasks.map((mask, idx) => ({
+          index: idx,
+          firstPt: mask.pts[0],
+          size: mask.size,
+        })),
+      })
+
+      const combinedMask = await createMaskCanvasFromImage(
+        absoluteMasks,
         currentImage
       )
 
-      // 使用实际图像尺寸创建mask
-      const combinedMask = await createImageSizedMask(scaledMasks, currentImage)
-
-      // 记录合并后的mask信息
-      console.log('=== 单张处理mask创建 ===', {
+      log.debug('单张处理mask创建', {
         combinedMaskSize: {
           width: combinedMask.width,
           height: combinedMask.height,
         },
         combinedMaskDataUrl: combinedMask.toDataURL().substring(0, 100) + '...',
-        displayCanvasSize: context
-          ? { width: context.canvas.width, height: context.canvas.height }
-          : 'no context',
       })
 
-      // 生成单张处理mask可视化 (调试用)
-      if (onVisualizeMask) {
-        try {
-          console.log('生成单张处理mask可视化...')
-          await onVisualizeMask(
-            file,
-            scaledMasks,
-            file.name.replace(/\.[^/.]+$/, '_single'),
-            {
-              type: 'Single Processing (Fixed)',
-              canvasSize: context
-                ? { width: context.canvas.width, height: context.canvas.height }
-                : null,
-              masksCount: scaledMasks.length,
-              scaleFactors: context
-                ? {
-                    x:
-                      (currentImage instanceof File
-                        ? await createImageBitmap(currentImage).then(
-                            b => b.width
-                          )
-                        : currentImage.naturalWidth) / context.canvas.width,
-                    y:
-                      (currentImage instanceof File
-                        ? await createImageBitmap(currentImage).then(
-                            b => b.height
-                          )
-                        : currentImage.naturalHeight) / context.canvas.height,
-                  }
-                : { x: 1, y: 1 },
-            }
-          )
-        } catch (error) {
-          console.warn('单张处理mask可视化失败:', error)
-        }
+      return { absoluteMasks, combinedMask }
+    },
+    []
+  )
+
+  // 执行inpaint并创建Image对象
+  const performInpaint = useCallback(
+    async (
+      currentImage: File | HTMLImageElement,
+      maskDataUrl: string
+    ): Promise<HTMLImageElement | null> => {
+      const result = await inpaint(currentImage, maskDataUrl)
+
+      if (!result) return null
+
+      const newRender = new Image()
+      newRender.dataset.id = Date.now().toString()
+      await loadImage(newRender, result)
+
+      log.info('batch_inpaint_processed', {
+        resultUrl: result.substring(0, 50) + '...',
+      })
+
+      return newRender
+    },
+    []
+  )
+
+  // 单张处理函数（只处理当前图片）
+  const processBatch = useCallback(async () => {
+    if (pendingMasks.length === 0) return
+
+    const loading = onloading()
+    setShowBatchButton(false)
+    setCurrentImageProcessed(true) // ✅ 标记当前图片已处理
+
+    try {
+      const currentImage = renders.slice(-1)[0] ?? file
+
+      logMaskProcessingStart(pendingMasks, currentImage)
+
+      const { absoluteMasks, combinedMask } = await convertAndCreateMask(
+        pendingMasks,
+        currentImage,
+        convertRelativeMasksToAbsolute
+      )
+
+      // 生成单张处理mask可视化 (调试用，仅开发环境)
+      try {
+        await createMaskVisualization(
+          file,
+          absoluteMasks,
+          getProcessedFileName(file.name, FILENAME_SUFFIX_SINGLE).replace(
+            /\.[^.]+$/,
+            ''
+          ),
+          {
+            type: 'Single Processing',
+            masksCount: absoluteMasks.length,
+          }
+        )
+      } catch (error) {
+        // 调试失败不影响业务
       }
 
-      const result = await inpaint(currentImage, combinedMask.toDataURL())
+      const newRender = await performInpaint(
+        currentImage,
+        combinedMask.toDataURL()
+      )
 
-      if (result) {
-        const newRender = new Image()
-        newRender.dataset.id = Date.now().toString()
-        await loadImage(newRender, result)
-
+      if (newRender) {
         setRenders(prev => [...prev, newRender])
         // 保留pendingMasks以便处理剩余图片时使用相同的mask
         // setPendingMasks([]) // 不清空待处理mask，保留给剩余图片处理
         setLines([{ pts: [], src: '' }]) // 重置绘制线条
-
-        console.log('batch_inpaint_processed', {
-          maskCount: pendingMasks.length,
-          resultUrl: result.substring(0, 50) + '...',
-        })
       }
     } catch (error: any) {
-      console.log('batch_inpaint_failed', {
+      log.error('batch_inpaint_failed', {
         error: error,
         maskCount: pendingMasks.length,
       })
@@ -389,15 +377,15 @@ export default function Editor(props: EditorProps) {
     draw()
   }, [
     pendingMasks,
-    convertMasksToImageCoordinates,
-    createImageSizedMask,
     renders,
     file,
     onloading,
     showError,
     draw,
-    onVisualizeMask,
-    context,
+    logMaskProcessingStart,
+    convertAndCreateMask,
+    convertRelativeMasksToAbsolute,
+    performInpaint,
   ])
 
   // Draw once the original image is loaded
@@ -442,21 +430,49 @@ export default function Editor(props: EditorProps) {
 
     // 批量模式：只累积mask，不立即处理
     const currentLine = lines[lines.length - 1]
-    const newPendingMasks = [...pendingMasks, currentLine]
-    setPendingMasks(newPendingMasks)
-    setLines([...lines, { pts: [], src: '' } as Line]) // 准备下一条线
-    setShowBatchButton(true)
+
+    // ✅ 使用工具函数转换为相对坐标
+    try {
+      if (!context?.canvas) {
+        log.warn('Canvas context未初始化')
+        return
+      }
+
+      const relativeLine = convertLineToRelative(currentLine, context.canvas)
+
+      // ✅ 使用统一的日志函数
+      logCoordinateConversion('Editor.handleStopDrawing', {
+        canvasPhysicalSize: {
+          width: context.canvas.width,
+          height: context.canvas.height,
+        },
+        canvasLogicalSize: {
+          width: context.canvas.clientWidth,
+          height: context.canvas.clientHeight,
+        },
+        originalLine: {
+          firstPt: currentLine.pts[0],
+          size: currentLine.size,
+        },
+        convertedLine: {
+          firstPt: relativeLine.pts[0],
+          size: relativeLine.size,
+        },
+      })
+
+      const newPendingMasks = [...pendingMasks, relativeLine]
+      setPendingMasks(newPendingMasks)
+      setLines([...lines, { pts: [], src: '' } as Line]) // 准备下一条线
+      setShowBatchButton(true)
+    } catch (error) {
+      log.error('坐标转换失败', error)
+      showError(
+        '坐标转换失败',
+        error instanceof Error ? error.message : String(error)
+      )
+    }
     // 历史列表滚动现在由 HistoryList 组件自己处理
-  }, [
-    original.src,
-    lines,
-    pendingMasks,
-    onloading,
-    refreshCanvasMask,
-    renders,
-    file,
-    showError,
-  ])
+  }, [original.src, lines, pendingMasks, context, showError])
 
   const handleMouseEnter = useCallback(() => {
     window.clearTimeout(hideBrushTimeout)
@@ -471,12 +487,14 @@ export default function Editor(props: EditorProps) {
 
   function download() {
     const currRender = renders.slice(-1)[0] ?? original
-    downloadImage(currRender.currentSrc, 'IMG')
+    const fileName = getProcessedFileName(file.name)
+    downloadImage(currRender.currentSrc, fileName)
   }
 
   const handleClearMarks = useCallback(() => {
     setPendingMasks([])
     setShowBatchButton(false)
+    setCurrentImageProcessed(false) // ✅ 重置当前图片处理状态
     setLines([{ pts: [], src: '' }])
   }, [])
 
@@ -606,7 +624,7 @@ export default function Editor(props: EditorProps) {
     setHideBrushTimeout(
       window.setTimeout(() => {
         setShowBrush(false)
-      }, BRUSH_HIDE_ON_SLIDER_CHANGE_TIMEOUT)
+      }, BRUSH_HIDE_TIMEOUT)
     )
   }
 
@@ -669,20 +687,20 @@ export default function Editor(props: EditorProps) {
           brushSize={brushSize}
           pendingMasksCount={pendingMasks.length}
           showBatchButton={showBatchButton}
+          currentImageProcessed={currentImageProcessed}
           remainingFilesCount={remainingFiles?.length || 0}
+          totalFilesCount={totalFilesCount}
           onUndo={undo}
           onBrushSizeChange={handleSliderChange}
           onBrushSizeStart={handleSliderStart}
           onDownload={download}
           onProcessBatch={processBatch}
-          onProcessRemaining={() =>
-            onProcessRemaining?.(
-              pendingMasks,
-              context
-                ? { width: context.canvas.width, height: context.canvas.height }
-                : undefined
-            )
-          }
+          onProcessAll={() => {
+            // 根据是否已处理当前图片决定行为
+            // 如果未处理：处理全部（includeCurrentFile = true）
+            // 如果已处理：处理剩余（includeCurrentFile = false）
+            onProcessRemaining?.(pendingMasks, !currentImageProcessed)
+          }}
           onClearMarks={handleClearMarks}
         />
       </div>

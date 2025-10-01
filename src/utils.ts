@@ -1,4 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
+import { FILENAME_SUFFIX_PROCESSED } from './constants'
+import { log } from './utils/logger'
 
 export function dataURItoBlob(dataURI: string) {
   const mime = dataURI.split(',')[0].split(':')[1].split(';')[0]
@@ -10,6 +12,50 @@ export function dataURItoBlob(dataURI: string) {
   return new Blob([new Uint8Array(array)], { type: mime })
 }
 
+/**
+ * 生成处理后的文件名
+ *
+ * @param originalName - 原始文件名
+ * @param suffix - 文件名后缀（默认为'_processed'）
+ * @returns 处理后的文件名（保留扩展名，清理特殊字符，限制长度）
+ *
+ * @example
+ * getProcessedFileName('jimeng-2025-09-27.jpg')
+ * // => 'jimeng-2025-09-27_processed.jpg'
+ *
+ * getProcessedFileName('image, with, commas.png')
+ * // => 'image_ with_ commas_processed.png'
+ *
+ * getProcessedFileName('very-long-name...'.repeat(20) + '.jpg')
+ * // => 'very-long-name..._processed.jpg' (截断到100字符)
+ */
+export function getProcessedFileName(
+  originalName: string,
+  suffix: string = FILENAME_SUFFIX_PROCESSED
+): string {
+  // 1. 提取扩展名
+  const lastDotIndex = originalName.lastIndexOf('.')
+  const baseName =
+    lastDotIndex > 0 ? originalName.slice(0, lastDotIndex) : originalName
+  const extension = lastDotIndex > 0 ? originalName.slice(lastDotIndex) : '.png'
+
+  // 2. 清理特殊字符
+  // 替换可能导致文件系统问题的字符：逗号、分号、冒号等
+  const cleanBaseName = baseName
+    .replace(/[,;:]/g, '_') // 替换标点符号
+    .replace(/\s+/g, ' ') // 合并多个空格为一个
+    .trim() // 去除首尾空格
+
+  // 3. 限制长度（避免文件名过长）
+  const maxBaseNameLength = 100
+  const truncatedBaseName =
+    cleanBaseName.length > maxBaseNameLength
+      ? cleanBaseName.slice(0, maxBaseNameLength).trim() + '...'
+      : cleanBaseName
+
+  // 4. 组合最终文件名
+  return `${truncatedBaseName}${suffix}${extension}`
+}
 
 export function downloadImage(uri: string, name: string) {
   const link = document.createElement('a')
@@ -69,11 +115,11 @@ export function useImage(
   useEffect(() => {
     const newImage = new Image()
     newImage.onload = () => {
-      setImage(newImage)  // 只有在onload时才设置image，确保width/height已加载
+      setImage(newImage) // 只有在onload时才设置image，确保width/height已加载
       setIsLoaded(true)
     }
-    newImage.onerror = (error) => {
-      console.error('useImage: Image load failed', error)
+    newImage.onerror = error => {
+      log.error('useImage: Image load failed', error)
     }
     newImage.src = URL.createObjectURL(file)
 

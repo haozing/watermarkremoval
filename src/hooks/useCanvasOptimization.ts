@@ -1,4 +1,5 @@
 import { useCallback, useRef, useState, useEffect } from 'react'
+import { log } from '../utils/logger'
 
 interface CanvasOptimizationOptions {
   throttleMs?: number
@@ -19,7 +20,7 @@ export const useCanvasOptimization = (
   const {
     throttleMs = 16, // ~60fps
     enableBatching = true,
-    enableOffscreenCanvas = false
+    enableOffscreenCanvas = false,
   } = options
 
   const [isDrawing, setIsDrawing] = useState(false)
@@ -27,19 +28,25 @@ export const useCanvasOptimization = (
   const frameId = useRef<number | null>(null)
   const lastDrawTime = useRef(0)
   const offscreenCanvas = useRef<OffscreenCanvas | null>(null)
-  const offscreenContext = useRef<OffscreenCanvasRenderingContext2D | null>(null)
+  const offscreenContext = useRef<OffscreenCanvasRenderingContext2D | null>(
+    null
+  )
 
   // Performance monitoring
   const performanceStats = useRef({
     drawCalls: 0,
     averageDrawTime: 0,
     totalDrawTime: 0,
-    skippedFrames: 0
+    skippedFrames: 0,
   })
 
   // Initialize offscreen canvas if supported and enabled
   useEffect(() => {
-    if (enableOffscreenCanvas && typeof OffscreenCanvas !== 'undefined' && canvasRef.current) {
+    if (
+      enableOffscreenCanvas &&
+      typeof OffscreenCanvas !== 'undefined' &&
+      canvasRef.current
+    ) {
       const canvas = canvasRef.current
       offscreenCanvas.current = new OffscreenCanvas(canvas.width, canvas.height)
       offscreenContext.current = offscreenCanvas.current.getContext('2d')
@@ -50,8 +57,10 @@ export const useCanvasOptimization = (
   const syncCanvasSize = useCallback(() => {
     if (offscreenCanvas.current && canvasRef.current) {
       const canvas = canvasRef.current
-      if (offscreenCanvas.current.width !== canvas.width ||
-          offscreenCanvas.current.height !== canvas.height) {
+      if (
+        offscreenCanvas.current.width !== canvas.width ||
+        offscreenCanvas.current.height !== canvas.height
+      ) {
         offscreenCanvas.current.width = canvas.width
         offscreenCanvas.current.height = canvas.height
       }
@@ -59,44 +68,48 @@ export const useCanvasOptimization = (
   }, [canvasRef])
 
   // Throttled draw function
-  const throttledDraw = useCallback((operation: () => void, priority: number = 1) => {
-    const now = performance.now()
+  const throttledDraw = useCallback(
+    (operation: () => void, priority: number = 1) => {
+      const now = performance.now()
 
-    if (!enableBatching) {
-      // Execute immediately if batching is disabled
-      const startTime = performance.now()
-      operation()
-      const endTime = performance.now()
+      if (!enableBatching) {
+        // Execute immediately if batching is disabled
+        const startTime = performance.now()
+        operation()
+        const endTime = performance.now()
 
-      // Update performance stats
-      performanceStats.current.drawCalls++
-      const drawTime = endTime - startTime
-      performanceStats.current.totalDrawTime += drawTime
-      performanceStats.current.averageDrawTime =
-        performanceStats.current.totalDrawTime / performanceStats.current.drawCalls
+        // Update performance stats
+        performanceStats.current.drawCalls++
+        const drawTime = endTime - startTime
+        performanceStats.current.totalDrawTime += drawTime
+        performanceStats.current.averageDrawTime =
+          performanceStats.current.totalDrawTime /
+          performanceStats.current.drawCalls
 
-      lastDrawTime.current = now
-      return
-    }
+        lastDrawTime.current = now
+        return
+      }
 
-    // Add to operation queue
-    const operationId = Math.random().toString(36).substring(2, 9)
-    operationQueue.current.push({
-      id: operationId,
-      operation,
-      priority
-    })
-
-    // Sort by priority (higher priority first)
-    operationQueue.current.sort((a, b) => b.priority - a.priority)
-
-    // Schedule frame if not already scheduled
-    if (!frameId.current) {
-      frameId.current = requestAnimationFrame(() => {
-        processOperationQueue()
+      // Add to operation queue
+      const operationId = Math.random().toString(36).substring(2, 9)
+      operationQueue.current.push({
+        id: operationId,
+        operation,
+        priority,
       })
-    }
-  }, [enableBatching])
+
+      // Sort by priority (higher priority first)
+      operationQueue.current.sort((a, b) => b.priority - a.priority)
+
+      // Schedule frame if not already scheduled
+      if (!frameId.current) {
+        frameId.current = requestAnimationFrame(() => {
+          processOperationQueue()
+        })
+      }
+    },
+    [enableBatching]
+  )
 
   // Process the operation queue
   const processOperationQueue = useCallback(() => {
@@ -124,7 +137,8 @@ export const useCanvasOptimization = (
 
     try {
       // Use offscreen canvas if available
-      const context = offscreenContext.current || canvasRef.current?.getContext('2d')
+      const context =
+        offscreenContext.current || canvasRef.current?.getContext('2d')
       if (!context) return
 
       // Execute operations
@@ -137,13 +151,17 @@ export const useCanvasOptimization = (
         const mainContext = canvasRef.current.getContext('2d')
         if (mainContext) {
           syncCanvasSize()
-          mainContext.clearRect(0, 0, canvasRef.current.width, canvasRef.current.height)
+          mainContext.clearRect(
+            0,
+            0,
+            canvasRef.current.width,
+            canvasRef.current.height
+          )
           mainContext.drawImage(offscreenCanvas.current, 0, 0)
         }
       }
-
     } catch (error) {
-      console.error('Canvas operation failed:', error)
+      log.error('Canvas operation failed', error)
     }
 
     const endTime = performance.now()
@@ -153,7 +171,8 @@ export const useCanvasOptimization = (
     performanceStats.current.drawCalls++
     performanceStats.current.totalDrawTime += drawTime
     performanceStats.current.averageDrawTime =
-      performanceStats.current.totalDrawTime / performanceStats.current.drawCalls
+      performanceStats.current.totalDrawTime /
+      performanceStats.current.drawCalls
 
     lastDrawTime.current = now
 
@@ -177,12 +196,15 @@ export const useCanvasOptimization = (
   }, [])
 
   // Batch multiple operations
-  const batchOperations = useCallback((operations: (() => void)[], priority: number = 1) => {
-    const batchOperation = () => {
-      operations.forEach(op => op())
-    }
-    throttledDraw(batchOperation, priority)
-  }, [throttledDraw])
+  const batchOperations = useCallback(
+    (operations: (() => void)[], priority: number = 1) => {
+      const batchOperation = () => {
+        operations.forEach(op => op())
+      }
+      throttledDraw(batchOperation, priority)
+    },
+    [throttledDraw]
+  )
 
   // Get performance statistics
   const getPerformanceStats = useCallback(() => {
@@ -195,7 +217,7 @@ export const useCanvasOptimization = (
       drawCalls: 0,
       averageDrawTime: 0,
       totalDrawTime: 0,
-      skippedFrames: 0
+      skippedFrames: 0,
     }
   }, [])
 
@@ -223,7 +245,7 @@ export const useCanvasOptimization = (
 
     // Canvas references
     offscreenCanvas: offscreenCanvas.current,
-    offscreenContext: offscreenContext.current
+    offscreenContext: offscreenContext.current,
   }
 }
 
@@ -295,6 +317,6 @@ export const useCanvasSize = (
 
   return {
     dimensions,
-    updateCanvasSize
+    updateCanvasSize,
   }
 }

@@ -1,4 +1,5 @@
 import { createInpaintSession } from '../adapters/inpainting'
+import { log } from '../utils/logger'
 
 // Global ort types (loaded dynamically via util.ts)
 declare global {
@@ -15,7 +16,7 @@ declare global {
  */
 export async function getGlobalInpaintSession(): Promise<ort.InferenceSession> {
   if (!window.__inpaintSessionPromise) {
-    console.log('Creating global ONNX session (one-time)...')
+    log.info('Creating global ONNX session (one-time)')
     window.__inpaintSessionPromise = createInpaintSession()
   }
   return window.__inpaintSessionPromise
@@ -33,9 +34,9 @@ export function clearGlobalSession(): void {
           session.dispose()
         }
       })
-      .catch(console.error)
+      .catch(error => log.error('Session disposal failed', error))
 
     delete window.__inpaintSessionPromise
-    console.log('Global session cleared')
+    log.info('Global session cleared')
   }
 }

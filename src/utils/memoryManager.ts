@@ -1,4 +1,5 @@
 import cv from 'opencv-ts'
+import { log } from './logger'
 
 interface MatPoolItem {
   mat: any
@@ -74,7 +75,7 @@ class MemoryManager {
         mat.delete()
       }
     } catch (error) {
-      console.warn('Error deleting Mat:', error)
+      log.warn('Error deleting Mat', error)
     }
   }
 
@@ -93,7 +94,7 @@ class MemoryManager {
       return true
     })
 
-    console.log(`Memory cleanup: ${this.matPool.length} Mats in pool`)
+    log.debug('Memory cleanup', { poolSize: this.matPool.length })
   }
 
   /**
@@ -113,9 +114,9 @@ class MemoryManager {
       setInterval(() => {
         const memInfo = (performance as any).memory
         if (memInfo.usedJSHeapSize > this.memoryWarningThreshold) {
-          console.warn('High memory usage detected:', {
-            used: Math.round(memInfo.usedJSHeapSize / 1024 / 1024) + 'MB',
-            total: Math.round(memInfo.totalJSHeapSize / 1024 / 1024) + 'MB',
+          log.warn('High memory usage detected', {
+            usedMB: Math.round(memInfo.usedJSHeapSize / 1024 / 1024),
+            totalMB: Math.round(memInfo.totalJSHeapSize / 1024 / 1024),
             poolSize: this.matPool.length,
           })
 
@@ -124,7 +125,7 @@ class MemoryManager {
 
           // 触发垃圾回收（如果可用）
           if (window.gc) {
-            console.log('Triggering garbage collection')
+            log.info('Triggering garbage collection')
             window.gc()
           }
         }

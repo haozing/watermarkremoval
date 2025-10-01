@@ -1,5 +1,6 @@
 import localforage from 'localforage'
 import { showGlobalError } from '../utils/errorManager'
+import { log } from '../utils/logger'
 
 export type modelType = 'inpaint'
 
@@ -66,7 +67,7 @@ export async function downloadModel(
   }
 
   async function downloadFromUrl(url: string) {
-    console.log('start download from', url)
+    log.info('start download from', url)
     setDownloadProgress(0)
     const response = await fetch(url)
     const fullSize = response.headers.get('content-length')
@@ -109,15 +110,19 @@ export async function downloadModel(
       try {
         await downloadFromUrl(model.backupUrl)
       } catch (r) {
-        showGlobalError('Model Download Failed', `Failed to download the backup model: ${r}`, {
-          label: 'Retry',
-          onClick: () => downloadModel(modelType, setDownloadProgress)
-        })
+        showGlobalError(
+          'Model Download Failed',
+          `Failed to download the backup model: ${r}`,
+          {
+            label: 'Retry',
+            onClick: () => downloadModel(modelType, setDownloadProgress),
+          }
+        )
       }
     }
     showGlobalError('Network Error', `Failed to download the model: ${e}`, {
       label: 'Retry',
-      onClick: () => downloadModel(modelType, setDownloadProgress)
+      onClick: () => downloadModel(modelType, setDownloadProgress),
     })
   }
 }

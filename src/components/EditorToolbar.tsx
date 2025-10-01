@@ -9,13 +9,15 @@ interface EditorToolbarProps {
   brushSize: number
   pendingMasksCount: number
   showBatchButton: boolean
+  currentImageProcessed: boolean // 当前图片是否已被单独处理
   remainingFilesCount: number
+  totalFilesCount: number // 总文件数（包括当前）
   onUndo: () => void
   onBrushSizeChange: (size: number) => void
   onBrushSizeStart: () => void
   onDownload: () => void
-  onProcessBatch: () => void
-  onProcessRemaining: () => void
+  onProcessBatch: () => void // 只处理当前图片
+  onProcessAll: () => void // 处理全部或处理剩余
   onClearMarks: () => void
 }
 
@@ -24,13 +26,15 @@ const EditorToolbar: React.FC<EditorToolbarProps> = ({
   brushSize,
   pendingMasksCount,
   showBatchButton,
+  currentImageProcessed,
   remainingFilesCount,
+  totalFilesCount,
   onUndo,
   onBrushSizeChange,
   onBrushSizeStart,
   onDownload,
   onProcessBatch,
-  onProcessRemaining,
+  onProcessAll,
   onClearMarks,
 }) => {
   return (
@@ -79,8 +83,8 @@ const EditorToolbar: React.FC<EditorToolbarProps> = ({
         />
       </div>
 
-      {/* Process All Button - 当前图片单张处理 */}
-      {showBatchButton && (
+      {/* Process Button - 只处理当前图片 */}
+      {showBatchButton && !currentImageProcessed && (
         <Button
           primary
           onClick={onProcessBatch}
@@ -101,15 +105,15 @@ const EditorToolbar: React.FC<EditorToolbarProps> = ({
             </svg>
           }
         >
-          {m.process_all()} ({pendingMasksCount})
+          处理 ({pendingMasksCount})
         </Button>
       )}
 
-      {/* Process Remaining Button - 批量处理剩余图片 */}
-      {remainingFilesCount > 0 && pendingMasksCount > 0 && (
+      {/* Process All / Process Remaining Button - 动态按钮 */}
+      {pendingMasksCount > 0 && totalFilesCount > 1 && (
         <Button
           primary
-          onClick={onProcessRemaining}
+          onClick={onProcessAll}
           className="bg-blue-500 hover:bg-blue-600 text-white"
           icon={
             <svg
@@ -127,7 +131,9 @@ const EditorToolbar: React.FC<EditorToolbarProps> = ({
             </svg>
           }
         >
-          {m.process_remaining()} {remainingFilesCount} 张图片
+          {currentImageProcessed
+            ? `处理剩余图片 (${remainingFilesCount}张)`
+            : `处理全部 (${totalFilesCount}张)`}
         </Button>
       )}
 
