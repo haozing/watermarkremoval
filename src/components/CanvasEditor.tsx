@@ -11,6 +11,7 @@ import {
 } from '../hooks/useCanvasOptimization'
 import { Line, drawLines } from '../types/canvas'
 import { log } from '../utils/logger'
+import { calculateMaskBounds } from '../utils/maskUtils'
 
 export interface CanvasEditorRef {
   draw: (index?: number) => void
@@ -34,6 +35,7 @@ interface CanvasEditorProps {
   onStopDrawing: () => Promise<void>
   onMouseMove: (ev: MouseEvent) => void
   onBrushMove: (ev: MouseEvent) => void
+  onDeleteMask: (maskIndex: number) => void
   setSeparatorLeft: (left: number) => void
   setUseSeparator: (use: boolean) => void
   setContext: (ctx: CanvasRenderingContext2D) => void
@@ -59,6 +61,7 @@ const CanvasEditor = forwardRef<CanvasEditorRef, CanvasEditorProps>(
       onStopDrawing,
       onMouseMove,
       onBrushMove,
+      onDeleteMask,
       setSeparatorLeft,
       setUseSeparator,
       setContext,
@@ -68,6 +71,16 @@ const CanvasEditor = forwardRef<CanvasEditorRef, CanvasEditorProps>(
     const canvasRef = useRef<HTMLCanvasElement>(null)
     const canvasDiv = useRef<HTMLDivElement>(null)
     const modalRef = useRef<HTMLDivElement>(null)
+
+    // 存储删除按钮的位置信息，用于点击检测
+    const deleteButtonsRef = useRef<
+      Array<{
+        maskIndex: number
+        x: number
+        y: number
+        radius: number
+      }>
+    >([])
 
     // Canvas optimization hooks - 修复后重新启用
     const canvasOptimization = useCanvasOptimization(canvasRef, {
@@ -162,8 +175,60 @@ const CanvasEditor = forwardRef<CanvasEditorRef, CanvasEditorProps>(
                 },
               })
 
-              displayPendingMasks.forEach(mask => {
+              // 清空删除按钮位置记录
+              deleteButtonsRef.current = []
+
+              displayPendingMasks.forEach((mask, index) => {
+                // 1. 绘制mask
                 drawLines(tempContext, [mask], 'rgba(255, 255, 0, 0.8)') // 黄色半透明
+
+                // 2. 计算mask边界并绘制删除按钮
+                const bounds = calculateMaskBounds(mask)
+                if (bounds) {
+                  const buttonRadius = 12 // 删除按钮半径
+                  const buttonX = bounds.x + bounds.width - buttonRadius / 2
+                  const buttonY = bounds.y + buttonRadius / 2
+
+                  // 记录按钮位置供点击检测使用
+                  deleteButtonsRef.current.push({
+                    maskIndex: index,
+                    x: buttonX,
+                    y: buttonY,
+                    radius: buttonRadius,
+                  })
+
+                  // 绘制圆形背景
+                  tempContext.save()
+                  tempContext.globalAlpha = 0.9
+                  tempContext.fillStyle = 'rgba(239, 68, 68, 1)' // 红色
+                  tempContext.beginPath()
+                  tempContext.arc(
+                    buttonX,
+                    buttonY,
+                    buttonRadius,
+                    0,
+                    2 * Math.PI
+                  )
+                  tempContext.fill()
+
+                  // 绘制白色边框
+                  tempContext.strokeStyle = 'white'
+                  tempContext.lineWidth = 2
+                  tempContext.stroke()
+
+                  // 绘制X图标
+                  tempContext.strokeStyle = 'white'
+                  tempContext.lineWidth = 2
+                  tempContext.lineCap = 'round'
+                  const iconSize = 6
+                  tempContext.beginPath()
+                  tempContext.moveTo(buttonX - iconSize, buttonY - iconSize)
+                  tempContext.lineTo(buttonX + iconSize, buttonY + iconSize)
+                  tempContext.moveTo(buttonX + iconSize, buttonY - iconSize)
+                  tempContext.lineTo(buttonX - iconSize, buttonY + iconSize)
+                  tempContext.stroke()
+                  tempContext.restore()
+                }
               })
             }
 
@@ -256,10 +321,38 @@ const CanvasEditor = forwardRef<CanvasEditorRef, CanvasEditorProps>(
         optimizedDraw()
       }
 
-      const onPointerStart = () => {
+      // 点击事件处理（检测删除按钮）
+      const onCanvasClick = (ev: MouseEvent) => {
+        const clickX = ev.offsetX - canvas.offsetLeft
+        const clickY = ev.offsetY - canvas.offsetTop
+
+        // 检测是否点击了删除按钮
+        for (const btn of deleteButtonsRef.current) {
+          const distance = Math.sqrt(
+            Math.pow(clickX - btn.x, 2) + Math.pow(clickY - btn.y, 2)
+          )
+
+          if (distance <= btn.radius) {
+            // 点击了删除按钮，阻止绘制并删除mask
+            ev.preventDefault()
+            ev.stopPropagation()
+            onDeleteMask(btn.maskIndex)
+            return true
+          }
+        }
+        return false
+      }
+
+      const onPointerStart = (ev: MouseEvent) => {
         if (!original.src) {
           return
         }
+
+        // 先检测是否点击了删除按钮
+        if (onCanvasClick(ev)) {
+          return
+        }
+
         const currLine = lines[lines.length - 1]
 
         // 直接存储brushSize，不做任何转换
@@ -271,7 +364,7 @@ const CanvasEditor = forwardRef<CanvasEditorRef, CanvasEditorProps>(
       }
 
       canvas.addEventListener('mousemove', onMouseMove)
-      canvas.addEventListener('touchstart', onPointerStart)
+      canvas.addEventListener('touchstart', onPointerStart as any)
       canvas.addEventListener('touchmove', onTouchMove)
       canvas.addEventListener('touchend', onPointerUp)
       canvas.onmousedown = onPointerStart
@@ -293,6 +386,7 @@ const CanvasEditor = forwardRef<CanvasEditorRef, CanvasEditorProps>(
       onBrushMove,
       onStartDrawing,
       onStopDrawing,
+      onDeleteMask,
       optimizedDraw,
     ])
 
