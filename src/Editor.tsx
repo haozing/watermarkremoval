@@ -382,7 +382,7 @@ export default function Editor(props: EditorProps) {
     performInpaint,
   ])
 
-  // Draw once the original image is loaded
+  // Draw once the original image is loaded or when switching images
   useEffect(() => {
     if (!context?.canvas) {
       return
@@ -390,7 +390,15 @@ export default function Editor(props: EditorProps) {
     if (isOriginalLoaded) {
       draw()
     }
-  }, [context?.canvas, draw, original, isOriginalLoaded, windowSize])
+  }, [
+    context?.canvas,
+    draw,
+    original,
+    isOriginalLoaded,
+    windowSize,
+    currentFileIndex,
+    pendingMasks,
+  ])
 
   // 鼠标和笔刷事件处理 - 现在由CanvasEditor处理
   const handleBrushMove = useCallback(
@@ -463,6 +471,9 @@ export default function Editor(props: EditorProps) {
       })
       setLines([...lines, { pts: [], src: '' } as Line]) // 准备下一条线
       setShowBatchButton(true)
+
+      // 立即重绘以显示新mask和删除按钮
+      draw()
     } catch (error) {
       log.error('坐标转换失败', error)
       showError(
@@ -532,7 +543,8 @@ export default function Editor(props: EditorProps) {
     setShowBatchButton(false)
     setCurrentImageProcessed(false) // ✅ 重置当前图片处理状态
     setLines([{ pts: [], src: '' }])
-  }, [currentFileIndex, setImageMasks])
+    draw() // 立即重绘以更新显示
+  }, [currentFileIndex, setImageMasks, draw])
 
   const undo = useCallback(async () => {
     if (pendingMasks.length > 0) {

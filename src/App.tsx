@@ -497,6 +497,9 @@ const AppContent: React.FC = () => {
               <div className="h-72 sm:w-1/2 max-w-5xl">
                 <FileSelect
                   onSelection={async selectedFiles => {
+                    // 清空数据库中的已处理图片
+                    await imageDB.clearAll()
+
                     const resizedFiles = []
                     for (const f of selectedFiles) {
                       const { file: resizedFile } = await resizeImageFile(
