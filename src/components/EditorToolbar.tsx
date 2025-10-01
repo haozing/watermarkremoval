@@ -18,7 +18,6 @@ interface EditorToolbarProps {
   onDownload: () => void
   onProcessBatch: () => void // 只处理当前图片
   onProcessAll: () => void // 处理全部或处理剩余
-  onBatchDownloadAll: () => void // 批量处理并统一下载
   onClearMarks: () => void
 }
 
@@ -36,7 +35,6 @@ const EditorToolbar: React.FC<EditorToolbarProps> = ({
   onDownload,
   onProcessBatch,
   onProcessAll,
-  onBatchDownloadAll,
   onClearMarks,
 }) => {
   return (
@@ -113,42 +111,30 @@ const EditorToolbar: React.FC<EditorToolbarProps> = ({
 
       {/* Process All / Process Remaining Button - 动态按钮 */}
       {pendingMasksCount > 0 && totalFilesCount > 1 && (
-        <>
-          <Button
-            primary
-            onClick={onProcessAll}
-            className="bg-blue-500 hover:bg-blue-600 text-white"
-            icon={
-              <svg
-                className="w-6 h-6"
-                fill="none"
-                stroke="currentColor"
-                viewBox="0 0 24 24"
-              >
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  strokeWidth={2}
-                  d="M9 5H7a2 2 0 00-2 2v10a2 2 0 002 2h8a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2"
-                />
-              </svg>
-            }
-          >
-            {currentImageProcessed
-              ? `处理剩余图片 (${remainingFilesCount}张)`
-              : `处理全部 (${totalFilesCount}张)`}
-          </Button>
-
-          {/* Batch Download All Button */}
-          <Button
-            primary
-            onClick={onBatchDownloadAll}
-            className="bg-purple-600 hover:bg-purple-700 text-white"
-            icon={<ArrowDownTrayIcon className="w-6 h-6" />}
-          >
-            批量下载全部 ({totalFilesCount}张)
-          </Button>
-        </>
+        <Button
+          primary
+          onClick={onProcessAll}
+          className="bg-blue-500 hover:bg-blue-600 text-white"
+          icon={
+            <svg
+              className="w-6 h-6"
+              fill="none"
+              stroke="currentColor"
+              viewBox="0 0 24 24"
+            >
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                strokeWidth={2}
+                d="M9 5H7a2 2 0 00-2 2v10a2 2 0 002 2h8a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2"
+              />
+            </svg>
+          }
+        >
+          {currentImageProcessed
+            ? `批量处理剩余 (${remainingFilesCount}张)`
+            : `批量处理全部 (${totalFilesCount}张)`}
+        </Button>
       )}
 
       {/* Clear Marks Button */}

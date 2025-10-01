@@ -193,26 +193,6 @@ const AppContent: React.FC = () => {
 
         const maskCanvas = convertAndLogBatchMask(templateMasks, bitmap, file)
 
-        // 生成批量处理mask可视化 (调试用)
-        try {
-          await createMaskVisualization(
-            file,
-            templateMasks,
-            getProcessedFileName(file.name, FILENAME_SUFFIX_BATCH).replace(
-              /\.[^.]+$/,
-              ''
-            ),
-            {
-              type: 'Batch Processing',
-              originalImageSize: { width: bitmap.width, height: bitmap.height },
-              masksCount: templateMasks.length,
-              scaleFactors: { x: 1, y: 1 },
-            }
-          )
-        } catch (error) {
-          log.warn('批量处理mask可视化失败', error)
-        }
-
         const resultUrl = await inpaintWithSession(
           file,
           maskCanvas.toDataURL(),

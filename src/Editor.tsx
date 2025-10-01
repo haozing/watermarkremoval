@@ -343,24 +343,6 @@ export default function Editor(props: EditorProps) {
         convertRelativeMasksToAbsolute
       )
 
-      // 生成单张处理mask可视化 (调试用，仅开发环境)
-      try {
-        await createMaskVisualization(
-          file,
-          absoluteMasks,
-          getProcessedFileName(file.name, FILENAME_SUFFIX_SINGLE).replace(
-            /\.[^.]+$/,
-            ''
-          ),
-          {
-            type: 'Single Processing',
-            masksCount: absoluteMasks.length,
-          }
-        )
-      } catch (error) {
-        // 调试失败不影响业务
-      }
-
       const newRender = await performInpaint(
         currentImage,
         combinedMask.toDataURL()
@@ -511,9 +493,8 @@ export default function Editor(props: EditorProps) {
   // 分隔符事件处理现在由CanvasEditor处理
 
   function download() {
-    const currRender = renders.slice(-1)[0] ?? original
-    const fileName = getProcessedFileName(file.name)
-    downloadImage(currRender.currentSrc, fileName)
+    // 跳转到下载页面
+    window.location.hash = '#download'
   }
 
   // 删除单个mask
@@ -696,14 +677,14 @@ export default function Editor(props: EditorProps) {
           onDownload={download}
           onProcessBatch={processBatch}
           onProcessAll={() => {
-            // 根据是否已处理当前图片决定行为
-            // 如果未处理：处理全部（includeCurrentFile = true）
-            // 如果已处理：处理剩余（includeCurrentFile = false）
-            onProcessRemaining?.(pendingMasks, !currentImageProcessed)
-          }}
-          onBatchDownloadAll={() => {
-            // 批量下载全部：保存到数据库，然后跳转下载页面
-            onProcessRemaining?.(pendingMasks, true, true)
+            // 批量处理：保存到IndexedDB，处理完跳转下载页面
+            // 如果未处理当前图片：处理全部
+            // 如果已处理当前图片：处理剩余
+            onProcessRemaining?.(
+              pendingMasks,
+              !currentImageProcessed,
+              true // 始终保存到数据库
+            )
           }}
           onClearMarks={handleClearMarks}
         />
