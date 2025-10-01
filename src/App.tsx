@@ -47,6 +47,9 @@ const AppContent: React.FC = () => {
   const [stateLanguageTag, setStateLanguageTag] = useState<'en' | 'zh'>('zh')
   const { addNotification } = useNotifications()
 
+  // 每张图片独立的masks（相对坐标0-1）
+  const [imageMasks, setImageMasks] = useState<Map<number, Line[]>>(new Map())
+
   // Batch processing progress
   const [batchProgress, setBatchProgress] = useState<{
     current: number
@@ -355,7 +358,13 @@ const AppContent: React.FC = () => {
     const imgBlob = await fetch(`/examples/${img}.jpeg`).then(r => r.blob())
     setFiles([new File([imgBlob], `${img}.jpeg`, { type: 'image/jpeg' })])
     setCurrentFileIndex(0)
+    setImageMasks(new Map()) // 重置masks
   }
+
+  // 切换图片处理函数
+  const handleSelectImage = useCallback((index: number) => {
+    setCurrentFileIndex(index)
+  }, [])
 
   return (
     <div className="min-h-full flex flex-col">
@@ -369,6 +378,7 @@ const AppContent: React.FC = () => {
           onClick={() => {
             setFiles([])
             setCurrentFileIndex(0)
+            setImageMasks(new Map()) // 重置所有masks
           }}
         >
           <div className="md:w-[290px]">
@@ -415,6 +425,11 @@ const AppContent: React.FC = () => {
           <>
             <Editor
               file={files[currentFileIndex]}
+              files={files}
+              currentFileIndex={currentFileIndex}
+              imageMasks={imageMasks}
+              setImageMasks={setImageMasks}
+              onSelectImage={handleSelectImage}
               remainingFiles={files.slice(currentFileIndex + 1)}
               totalFilesCount={files.length}
               onProcessRemaining={handleProcessRemaining}
@@ -454,6 +469,7 @@ const AppContent: React.FC = () => {
                     }
                     setFiles(resizedFiles)
                     setCurrentFileIndex(0)
+                    setImageMasks(new Map()) // 重置所有masks
                   }}
                 />
               </div>

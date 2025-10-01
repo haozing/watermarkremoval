@@ -24,7 +24,7 @@ import {
 } from './utils/coordinateTransform'
 import { createMaskCanvasFromImage } from './utils/maskUtils'
 import { createMaskVisualization } from './debug/maskVisualizer'
-import HistoryList from './components/HistoryList'
+import ImageGallery from './components/ImageGallery'
 import CanvasEditor, { CanvasEditorRef } from './components/CanvasEditor'
 import EditorToolbar from './components/EditorToolbar'
 import * as m from './paraglide/messages'
@@ -37,6 +37,11 @@ import { log } from './utils/logger'
 
 interface EditorProps {
   file: File
+  files: File[] // 新增：所有文件
+  currentFileIndex: number // 新增：当前文件索引
+  imageMasks: Map<number, Line[]> // 新增：每张图片的masks
+  setImageMasks: React.Dispatch<React.SetStateAction<Map<number, Line[]>>> // 新增：设置masks
+  onSelectImage: (index: number) => void // 新增：切换图片
   remainingFiles?: File[]
   totalFilesCount?: number // 总文件数
   onProcessRemaining?: (
@@ -48,6 +53,11 @@ interface EditorProps {
 export default function Editor(props: EditorProps) {
   const {
     file,
+    files,
+    currentFileIndex,
+    imageMasks,
+    setImageMasks,
+    onSelectImage,
     remainingFiles = [],
     totalFilesCount = 1,
     onProcessRemaining,
@@ -64,7 +74,8 @@ export default function Editor(props: EditorProps) {
   const [hideBrushTimeout, setHideBrushTimeout] = useState(0)
   const [isInpaintingLoading, setIsProcessingLoading] = useState(false)
   const [generateProgress, setGenerateProgress] = useState(0)
-  const [pendingMasks, setPendingMasks] = useState<Line[]>([])
+  // 删除 pendingMasks state，改用从imageMasks中获取
+  const pendingMasks = imageMasks.get(currentFileIndex) || []
   const [showBatchButton, setShowBatchButton] = useState(false)
   const [currentImageProcessed, setCurrentImageProcessed] = useState(false) // 当前图片是否已被单独处理
   const modalRef = useRef(null)
@@ -461,7 +472,12 @@ export default function Editor(props: EditorProps) {
       })
 
       const newPendingMasks = [...pendingMasks, relativeLine]
-      setPendingMasks(newPendingMasks)
+      // 更新当前图片的masks
+      setImageMasks(prev => {
+        const updated = new Map(prev)
+        updated.set(currentFileIndex, newPendingMasks)
+        return updated
+      })
       setLines([...lines, { pts: [], src: '' } as Line]) // 准备下一条线
       setShowBatchButton(true)
     } catch (error) {
@@ -472,7 +488,15 @@ export default function Editor(props: EditorProps) {
       )
     }
     // 历史列表滚动现在由 HistoryList 组件自己处理
-  }, [original.src, lines, pendingMasks, context, showError])
+  }, [
+    original.src,
+    lines,
+    pendingMasks,
+    context,
+    showError,
+    currentFileIndex,
+    setImageMasks,
+  ])
 
   const handleMouseEnter = useCallback(() => {
     window.clearTimeout(hideBrushTimeout)
@@ -491,19 +515,58 @@ export default function Editor(props: EditorProps) {
     downloadImage(currRender.currentSrc, fileName)
   }
 
+  // 删除单个mask
+  const handleDeleteMask = useCallback(
+    (maskIndex: number) => {
+      const currentMasks = pendingMasks
+      const newMasks = currentMasks.filter((_, idx) => idx !== maskIndex)
+
+      setImageMasks(prev => {
+        const updated = new Map(prev)
+        if (newMasks.length === 0) {
+          updated.delete(currentFileIndex)
+        } else {
+          updated.set(currentFileIndex, newMasks)
+        }
+        return updated
+      })
+
+      if (newMasks.length === 0) {
+        setShowBatchButton(false)
+      }
+
+      draw()
+    },
+    [pendingMasks, currentFileIndex, setImageMasks, draw]
+  )
+
   const handleClearMarks = useCallback(() => {
-    setPendingMasks([])
+    // 清除当前图片的masks
+    setImageMasks(prev => {
+      const updated = new Map(prev)
+      updated.delete(currentFileIndex)
+      return updated
+    })
     setShowBatchButton(false)
     setCurrentImageProcessed(false) // ✅ 重置当前图片处理状态
     setLines([{ pts: [], src: '' }])
-  }, [])
+  }, [currentFileIndex, setImageMasks])
 
   const undo = useCallback(async () => {
     if (pendingMasks.length > 0) {
       // 撤销最后一个mask
       const newPendingMasks = [...pendingMasks]
       newPendingMasks.pop()
-      setPendingMasks(newPendingMasks)
+      // 更新当前图片的masks
+      setImageMasks(prev => {
+        const updated = new Map(prev)
+        if (newPendingMasks.length === 0) {
+          updated.delete(currentFileIndex)
+        } else {
+          updated.set(currentFileIndex, newPendingMasks)
+        }
+        return updated
+      })
 
       if (newPendingMasks.length === 0) {
         setShowBatchButton(false)
@@ -522,7 +585,7 @@ export default function Editor(props: EditorProps) {
     const r = renders
     r.pop()
     setRenders([...r])
-  }, [lines, renders, pendingMasks, draw])
+  }, [lines, renders, pendingMasks, draw, currentFileIndex, setImageMasks])
 
   useEffect(() => {
     const handler = (event: KeyboardEvent) => {
@@ -540,71 +603,6 @@ export default function Editor(props: EditorProps) {
       window.removeEventListener('keydown', handler)
     }
   }, [renders, undo])
-
-  const backTo = useCallback(
-    (index: number) => {
-      lines.splice(index + 1)
-      setLines([...lines, { pts: [], src: '' }])
-      renders.splice(index + 1)
-      setRenders([...renders])
-    },
-    [renders, lines]
-  )
-
-  const History = useMemo(
-    () =>
-      renders.map((render, index) => {
-        return (
-          <div
-            key={render.dataset.id}
-            style={{
-              position: 'relative',
-              display: 'inline-block',
-              flexShrink: 0,
-            }}
-          >
-            <img
-              src={render.src}
-              alt="render"
-              className="rounded-sm"
-              style={{
-                height: '90px',
-              }}
-            />
-            <Button
-              className="hover:opacity-100 opacity-0 cursor-pointer rounded-sm"
-              style={{
-                position: 'absolute',
-                top: '0',
-                left: '0',
-                width: '100%',
-                height: '100%',
-                backgroundColor: 'rgba(0, 0, 0, 0.5)',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-              }}
-              onClick={() => backTo(index)}
-              onEnter={() => draw(index)}
-              onLeave={draw}
-            >
-              <div
-                style={{
-                  color: '#fff',
-                  fontSize: '12px',
-                  textAlign: 'center',
-                }}
-              >
-                回到这
-                <br />
-                Back here
-              </div>
-            </Button>
-          </div>
-        )
-      }),
-    [renders, backTo]
-  )
 
   const handleSliderStart = () => {
     setShowBrush(true)
@@ -631,16 +629,16 @@ export default function Editor(props: EditorProps) {
   return (
     <div
       className={[
-        'flex flex-row h-full',
+        'flex flex-col h-full',
         isInpaintingLoading ? 'animate-pulse-fast pointer-events-none' : '',
       ].join(' ')}
     >
-      {/* History List - Left sidebar */}
-      <HistoryList
-        renders={renders}
-        onBackTo={backTo}
-        onPreview={draw}
-        onPreviewEnd={draw}
+      {/* 顶部图片选择器 */}
+      <ImageGallery
+        files={files}
+        currentIndex={currentFileIndex}
+        imageMasks={imageMasks}
+        onSelectImage={onSelectImage}
       />
 
       {/* Main content area */}
@@ -665,6 +663,7 @@ export default function Editor(props: EditorProps) {
           onStopDrawing={handleStopDrawing}
           onMouseMove={() => {}}
           onBrushMove={handleBrushMove}
+          onDeleteMask={handleDeleteMask}
           setSeparatorLeft={setSeparatorLeft}
           setUseSeparator={setUseSeparator}
           setContext={setContext}

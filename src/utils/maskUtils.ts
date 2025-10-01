@@ -75,3 +75,48 @@ export async function createMaskCanvasFromImage(
 
   return createMaskCanvas(masks, { width, height })
 }
+
+/**
+ * Mask边界框接口
+ */
+export interface BoundingBox {
+  x: number // 左上角X坐标
+  y: number // 左上角Y坐标
+  width: number // 宽度
+  height: number // 高度
+  centerX: number // 中心X坐标
+  centerY: number // 中心Y坐标
+}
+
+/**
+ * 计算mask的边界框
+ * 用于在canvas上绘制删除按钮等交互元素
+ *
+ * @param mask - Line对象（可以是相对坐标或绝对坐标）
+ * @returns 边界框信息
+ */
+export function calculateMaskBounds(mask: Line): BoundingBox | null {
+  if (!mask.pts || mask.pts.length === 0) {
+    return null
+  }
+
+  const xs = mask.pts.map(pt => pt.x)
+  const ys = mask.pts.map(pt => pt.y)
+
+  const minX = Math.min(...xs)
+  const maxX = Math.max(...xs)
+  const minY = Math.min(...ys)
+  const maxY = Math.max(...ys)
+
+  const width = maxX - minX
+  const height = maxY - minY
+
+  return {
+    x: minX,
+    y: minY,
+    width,
+    height,
+    centerX: minX + width / 2,
+    centerY: minY + height / 2,
+  }
+}
