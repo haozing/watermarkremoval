@@ -100,6 +100,16 @@ export default function Editor(props: EditorProps) {
     }
   }, [])
 
+  // 切换图片时重置编辑器状态
+  useEffect(() => {
+    setLines([{ pts: [], src: '' }])
+    setRenders([])
+    setCurrentImageProcessed(false)
+    const hasMasks = pendingMasks.length > 0
+    setShowBatchButton(hasMasks)
+    // draw()会被下面的useEffect自动调用（监听isOriginalLoaded）
+  }, [currentFileIndex, pendingMasks.length])
+
   // Draw函数 - 调用CanvasEditor的draw方法
   const draw = useCallback(
     (index = -1) => {
