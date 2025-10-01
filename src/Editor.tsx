@@ -46,7 +46,8 @@ interface EditorProps {
   totalFilesCount?: number // 总文件数
   onProcessRemaining?: (
     templateMasks: Line[],
-    includeCurrentFile?: boolean // 是否包含当前文件
+    includeCurrentFile?: boolean, // 是否包含当前文件
+    saveToDb?: boolean // 是否保存到数据库（批量下载）
   ) => void
 }
 
@@ -699,6 +700,10 @@ export default function Editor(props: EditorProps) {
             // 如果未处理：处理全部（includeCurrentFile = true）
             // 如果已处理：处理剩余（includeCurrentFile = false）
             onProcessRemaining?.(pendingMasks, !currentImageProcessed)
+          }}
+          onBatchDownloadAll={() => {
+            // 批量下载全部：保存到数据库，然后跳转下载页面
+            onProcessRemaining?.(pendingMasks, true, true)
           }}
           onClearMarks={handleClearMarks}
         />

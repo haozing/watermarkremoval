@@ -40,6 +40,8 @@ import {
   GC_FALLBACK_DELAY,
 } from './constants'
 import { log } from './utils/logger'
+import { imageDB } from './utils/imageDatabase'
+import DownloadPage from './components/DownloadPage'
 
 const AppContent: React.FC = () => {
   const [files, setFiles] = useState<File[]>([])
@@ -56,7 +58,26 @@ const AppContent: React.FC = () => {
     total: number
   } | null>(null)
 
+  // 简单路由：检测URL hash
+  const [currentRoute, setCurrentRoute] = useState<'home' | 'download'>('home')
+
   onSetLanguageTag(() => setStateLanguageTag(languageTag()))
+
+  // 检测URL变化
+  useEffect(() => {
+    const checkRoute = () => {
+      const hash = window.location.hash
+      if (hash === '#download') {
+        setCurrentRoute('download')
+      } else {
+        setCurrentRoute('home')
+      }
+    }
+
+    checkRoute()
+    window.addEventListener('hashchange', checkRoute)
+    return () => window.removeEventListener('hashchange', checkRoute)
+  }, [])
 
   const [showAbout, setShowAbout] = useState(false)
   const modalRef = useRef(null)
@@ -157,7 +178,8 @@ const AppContent: React.FC = () => {
     async (
       file: File,
       templateMasks: Line[],
-      session: ort.InferenceSession
+      session: ort.InferenceSession,
+      saveToDb: boolean = false // 新增：是否保存到IndexedDB
     ): Promise<string> => {
       let canvas: HTMLCanvasElement | null = null
       let bitmap: ImageBitmap | null = null
@@ -198,6 +220,21 @@ const AppContent: React.FC = () => {
         )
         if (!resultUrl) throw new Error('Inpaint processing failed')
 
+        if (saveToDb) {
+          // 保存到IndexedDB而不是直接下载
+          const blob = await fetch(resultUrl).then(r => r.blob())
+          const fileName = getProcessedFileName(file.name)
+
+          await imageDB.saveImage({
+            id: `${Date.now()}-${Math.random()}`,
+            fileName,
+            blob,
+            timestamp: Date.now(),
+          })
+
+          log.info(`图片保存到数据库: ${fileName}`)
+        }
+
         return resultUrl
       } finally {
         // CRITICAL: Aggressive cleanup in specific order
@@ -231,6 +268,7 @@ const AppContent: React.FC = () => {
     async (
       filesToProcess: File[],
       relativeMasks: Line[], // 已经是相对坐标(0-1)
+      saveToDb: boolean = false, // 新增：是否保存到数据库
       onProgress: (current: number, total: number) => void
     ) => {
       log.debug('批量处理Session测试')
@@ -249,7 +287,8 @@ const AppContent: React.FC = () => {
           const processedUrl = await processSingleImageWithSession(
             file,
             relativeMasks,
-            session
+            session,
+            saveToDb // 传递saveToDb参数
           )
 
           // Validate that we got a processed result
@@ -257,11 +296,12 @@ const AppContent: React.FC = () => {
             throw new Error('处理结果无效或为空')
           }
 
-          // Download immediately with cleaned filename
-          const fileName = getProcessedFileName(file.name)
-          downloadImage(processedUrl, fileName)
-
-          log.info(`Successfully processed and downloaded: ${fileName}`)
+          if (!saveToDb) {
+            // 直接下载模式
+            const fileName = getProcessedFileName(file.name)
+            downloadImage(processedUrl, fileName)
+            log.info(`Successfully processed and downloaded: ${fileName}`)
+          }
 
           // Yield to main thread to prevent blocking UI
           await new Promise(r => setTimeout(r, GC_FALLBACK_DELAY))
@@ -269,6 +309,12 @@ const AppContent: React.FC = () => {
           log.error(`Failed to process ${file.name}`, error)
           addNotification(`处理 ${file.name} 失败: ${error}`, 'error')
         }
+      }
+
+      // 如果是保存到数据库模式，处理完成后跳转到下载页面
+      if (saveToDb) {
+        log.info('所有图片已保存到数据库，跳转到下载页面')
+        window.location.hash = '#download'
       }
     },
     [processSingleImageWithSession, addNotification]
@@ -278,7 +324,8 @@ const AppContent: React.FC = () => {
   const handleProcessRemaining = useCallback(
     async (
       templateMasks: Line[],
-      includeCurrentFile: boolean = false // ✅ 是否包含当前文件
+      includeCurrentFile: boolean = false, // ✅ 是否包含当前文件
+      saveToDb: boolean = false // 新增：是否保存到数据库（用于批量下载）
     ) => {
       // ✅ 根据参数决定处理哪些文件
       const filesToProcess = includeCurrentFile
@@ -326,25 +373,31 @@ const AppContent: React.FC = () => {
         await processRemainingFiles(
           filesToProcess,
           validMasks, // ✅ 直接传相对坐标，不需要转换！
+          saveToDb, // 传递saveToDb参数
           (current, total) => {
             setBatchProgress({ current, total })
           }
         )
 
         setBatchProgress(null)
-        // ✅ 根据是否包含当前文件决定最终索引位置
-        if (includeCurrentFile) {
-          // 处理全部：移到最后一张
-          setCurrentFileIndex(files.length - 1)
-        } else {
-          // 处理剩余：保持当前位置不变（因为当前图片已经单独处理过了）
-          // 或者也可以移到最后一张
-          setCurrentFileIndex(files.length - 1)
+
+        if (!saveToDb) {
+          // 只有非数据库模式才更新文件索引
+          // ✅ 根据是否包含当前文件决定最终索引位置
+          if (includeCurrentFile) {
+            // 处理全部：移到最后一张
+            setCurrentFileIndex(files.length - 1)
+          } else {
+            // 处理剩余：保持当前位置不变（因为当前图片已经单独处理过了）
+            // 或者也可以移到最后一张
+            setCurrentFileIndex(files.length - 1)
+          }
+          addNotification(
+            `${actionText}完成！已处理 ${filesToProcess.length} 张图片`,
+            'success'
+          )
         }
-        addNotification(
-          `${actionText}完成！已处理 ${filesToProcess.length} 张图片`,
-          'success'
-        )
+        // 数据库模式下，会自动跳转到下载页面，不显示通知
       } catch (error) {
         setBatchProgress(null)
         log.error('Batch processing failed', error)
@@ -365,6 +418,11 @@ const AppContent: React.FC = () => {
   const handleSelectImage = useCallback((index: number) => {
     setCurrentFileIndex(index)
   }, [])
+
+  // 路由渲染
+  if (currentRoute === 'download') {
+    return <DownloadPage />
+  }
 
   return (
     <div className="min-h-full flex flex-col">
