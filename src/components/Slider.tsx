@@ -26,7 +26,7 @@ export default function Slider(props: SliderProps) {
         onChange={ev => {
           ev.preventDefault()
           ev.stopPropagation()
-          onChange(parseInt(ev.currentTarget.value, 10))
+          onChange(parseFloat(ev.currentTarget.value))
         }}
       />
     </div>

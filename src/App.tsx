@@ -95,13 +95,6 @@ const AppContent: React.FC = () => {
     setGlobalErrorHandler(addNotification)
   }, [addNotification])
 
-  useEffect(() => {
-    if (!modelInitialized.current) {
-      modelInitialized.current = true
-      downloadModel('inpaint', setDownloadProgress)
-    }
-  }, [])
-
   useClickAway(modalRef, () => {
     setShowAbout(false)
   })
@@ -389,6 +382,13 @@ const AppContent: React.FC = () => {
 
   async function startWithDemoImage(img: string) {
     const imgBlob = await fetch(`/examples/${img}.jpeg`).then(r => r.blob())
+
+    // 开始后台下载模型（不阻塞UI）
+    if (!modelInitialized.current) {
+      modelInitialized.current = true
+      downloadModel('inpaint', setDownloadProgress)
+    }
+
     setFiles([new File([imgBlob], `${img}.jpeg`, { type: 'image/jpeg' })])
     setCurrentFileIndex(0)
     setImageMasks(new Map()) // 重置masks
@@ -500,6 +500,12 @@ const AppContent: React.FC = () => {
                     // 清空数据库中的已处理图片
                     await imageDB.clearAll()
 
+                    // 开始后台下载模型（不阻塞UI）
+                    if (!modelInitialized.current) {
+                      modelInitialized.current = true
+                      downloadModel('inpaint', setDownloadProgress)
+                    }
+
                     const resizedFiles = []
                     for (const f of selectedFiles) {
                       const { file: resizedFile } = await resizeImageFile(
@@ -513,29 +519,6 @@ const AppContent: React.FC = () => {
                     setImageMasks(new Map()) // 重置所有masks
                   }}
                 />
-              </div>
-              <div className="flex flex-col sm:flex-row pt-10 items-center justify-center cursor-pointer">
-                <span className="text-gray-500">{m.try_it_images()}</span>
-                <div className="flex space-x-2 sm:space-x-4 px-4">
-                  {['bag', 'dog', 'car', 'bird', 'jacket', 'shoe', 'paris'].map(
-                    image => (
-                      <div
-                        key={image}
-                        onClick={() => startWithDemoImage(image)}
-                        role="button"
-                        onKeyDown={() => startWithDemoImage(image)}
-                        tabIndex={-1}
-                      >
-                        <img
-                          className="rounded-md hover:opacity-75 w-auto h-25"
-                          src={`examples/${image}.jpeg`}
-                          alt={image}
-                          style={{ height: '100px' }}
-                        />
-                      </div>
-                    )
-                  )}
-                </div>
               </div>
             </div>
           </>
@@ -574,13 +557,13 @@ const AppContent: React.FC = () => {
           </div>
         </Modal>
       )}
-      {!(downloadProgress === 100) && (
-        <Modal>
-          <div className="text-xl space-y-5">
-            <p>{m.inpaint_model_download_message()}</p>
-            <Progress percent={downloadProgress} />
-          </div>
-        </Modal>
+      {downloadProgress < 100 && downloadProgress > 0 && (
+        <div className="fixed top-16 right-4 bg-white shadow-lg rounded-lg p-4 z-50 border border-gray-200">
+          <p className="text-sm mb-2 text-gray-700">
+            {m.inpaint_model_download_message()}
+          </p>
+          <Progress percent={downloadProgress} />
+        </div>
       )}
     </div>
   )

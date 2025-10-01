@@ -162,6 +162,30 @@ class ImageDatabase {
       }
     })
   }
+
+  /**
+   * 根据文件名查找图片
+   */
+  async getImageByFileName(fileName: string): Promise<ProcessedImage | null> {
+    if (!this.db) await this.init()
+
+    return new Promise((resolve, reject) => {
+      const transaction = this.db!.transaction([this.storeName], 'readonly')
+      const store = transaction.objectStore(this.storeName)
+      const request = store.getAll()
+
+      request.onsuccess = () => {
+        const images = request.result as ProcessedImage[]
+        const found = images.find(img => img.fileName === fileName)
+        resolve(found || null)
+      }
+
+      request.onerror = () => {
+        log.error('查询图片失败', request.error)
+        reject(request.error)
+      }
+    })
+  }
 }
 
 // 导出单例

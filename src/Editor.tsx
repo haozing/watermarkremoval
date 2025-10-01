@@ -34,6 +34,7 @@ import {
   FILENAME_SUFFIX_SINGLE,
 } from './constants'
 import { log } from './utils/logger'
+import { imageDB } from './utils/imageDatabase'
 
 interface EditorProps {
   file: File
@@ -79,6 +80,8 @@ export default function Editor(props: EditorProps) {
   const pendingMasks = imageMasks.get(currentFileIndex) || []
   const [showBatchButton, setShowBatchButton] = useState(false)
   const [currentImageProcessed, setCurrentImageProcessed] = useState(false) // 当前图片是否已被单独处理
+  const [hasProcessedVersion, setHasProcessedVersion] = useState(false) // 当前图片是否有已处理版本
+  const [isViewingProcessed, setIsViewingProcessed] = useState(false) // 是否正在查看处理结果
   const modalRef = useRef(null)
   const [useSeparator, setUseSeparator] = useState(false)
   const [separatorLeft, setSeparatorLeft] = useState(0)
@@ -337,7 +340,7 @@ export default function Editor(props: EditorProps) {
     async (
       currentImage: File | HTMLImageElement,
       maskDataUrl: string
-    ): Promise<HTMLImageElement | null> => {
+    ): Promise<{ image: HTMLImageElement; dataUrl: string } | null> => {
       const result = await inpaint(currentImage, maskDataUrl)
 
       if (!result) return null
@@ -350,7 +353,7 @@ export default function Editor(props: EditorProps) {
         resultUrl: result.substring(0, 50) + '...',
       })
 
-      return newRender
+      return { image: newRender, dataUrl: result }
     },
     []
   )
@@ -374,15 +377,34 @@ export default function Editor(props: EditorProps) {
         convertRelativeMasksToAbsolute
       )
 
-      const newRender = await performInpaint(
+      const result = await performInpaint(
         currentImage,
         combinedMask.toDataURL()
       )
 
-      if (newRender) {
-        setRenders(prev => [...prev, newRender])
-        // 保留pendingMasks以便处理剩余图片时使用相同的mask
-        // setPendingMasks([]) // 不清空待处理mask，保留给剩余图片处理
+      if (result) {
+        const { image, dataUrl } = result
+
+        // 保存到数据库
+        try {
+          const blob = await fetch(dataUrl).then(r => r.blob())
+          const fileName = getProcessedFileName(file.name)
+
+          await imageDB.saveImage({
+            id: `${Date.now()}-${Math.random()}`,
+            fileName,
+            blob,
+            timestamp: Date.now(),
+          })
+
+          log.info(`单张处理图片已保存到数据库: ${fileName}`)
+        } catch (dbError) {
+          log.error('保存到数据库失败', dbError)
+          // 不影响主流程，继续显示
+        }
+
+        // 添加到渲染历史
+        setRenders(prev => [...prev, image])
         setLines([{ pts: [], src: '' }]) // 重置绘制线条
       }
     } catch (error: any) {
@@ -399,7 +421,7 @@ export default function Editor(props: EditorProps) {
     // 历史列表滚动现在由 HistoryList 组件自己处理
 
     loading.close()
-    draw()
+    // draw() 会由 renders 变化的 useEffect 自动触发，避免重复调用
   }, [
     pendingMasks,
     renders,
@@ -412,6 +434,36 @@ export default function Editor(props: EditorProps) {
     convertRelativeMasksToAbsolute,
     performInpaint,
   ])
+
+  // 加载并显示已处理的图片
+  const loadProcessedVersion = useCallback(async () => {
+    try {
+      const processedFileName = getProcessedFileName(file.name)
+      const processedImage = await imageDB.getImageByFileName(processedFileName)
+
+      if (!processedImage) {
+        showError('未找到处理结果', '图片可能已被删除')
+        return
+      }
+
+      // 将 blob 转换为 Image 对象
+      const url = URL.createObjectURL(processedImage.blob)
+      const img = new Image()
+      await loadImage(img, url)
+
+      // 添加到 renders 数组
+      setRenders([img])
+      setIsViewingProcessed(true)
+
+      log.info('已加载处理结果', { fileName: processedFileName })
+    } catch (error) {
+      log.error('加载处理结果失败', error)
+      showError(
+        '加载失败',
+        error instanceof Error ? error.message : String(error)
+      )
+    }
+  }, [file, showError])
 
   // Draw once the original image is loaded or when switching images
   useEffect(() => {
@@ -629,6 +681,34 @@ export default function Editor(props: EditorProps) {
     }
   }, [renders, undo])
 
+  // 监听 renders 变化，自动重绘 canvas（确保处理完成后及时更新显示）
+  useEffect(() => {
+    if (renders.length > 0) {
+      draw()
+    }
+  }, [renders, draw])
+
+  // 检测当前图片是否有已处理版本
+  useEffect(() => {
+    const checkProcessedVersion = async () => {
+      try {
+        const processedFileName = getProcessedFileName(file.name)
+        const processedImage = await imageDB.getImageByFileName(
+          processedFileName
+        )
+        setHasProcessedVersion(!!processedImage)
+
+        // 如果切换图片，重置浏览状态
+        setIsViewingProcessed(false)
+      } catch (error) {
+        log.error('检查已处理版本失败', error)
+        setHasProcessedVersion(false)
+      }
+    }
+
+    checkProcessedVersion()
+  }, [file, currentFileIndex])
+
   const handleSliderStart = () => {
     setShowBrush(true)
   }
@@ -712,6 +792,8 @@ export default function Editor(props: EditorProps) {
           pendingMasksCount={pendingMasks.length}
           showBatchButton={showBatchButton}
           currentImageProcessed={currentImageProcessed}
+          hasProcessedVersion={hasProcessedVersion}
+          isViewingProcessed={isViewingProcessed}
           remainingFilesCount={remainingFiles?.length || 0}
           totalFilesCount={totalFilesCount}
           onUndo={undo}
@@ -719,6 +801,7 @@ export default function Editor(props: EditorProps) {
           onBrushSizeStart={handleSliderStart}
           onDownload={download}
           onProcessBatch={processBatch}
+          onLoadProcessed={loadProcessedVersion}
           onProcessAll={() => {
             // 批量处理：保存到IndexedDB，处理完跳转下载页面
             // 如果未处理当前图片：处理全部
