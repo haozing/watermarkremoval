@@ -100,15 +100,36 @@ export default function Editor(props: EditorProps) {
     }
   }, [])
 
-  // 切换图片时重置编辑器状态
+  // 切换图片时重置编辑器状态并应用模板mask
   useEffect(() => {
+    // 1. 重置编辑器状态
     setLines([{ pts: [], src: '' }])
     setRenders([])
     setCurrentImageProcessed(false)
-    const hasMasks = pendingMasks.length > 0
-    setShowBatchButton(hasMasks)
-    // draw()会被下面的useEffect自动调用（监听isOriginalLoaded）
-  }, [currentFileIndex, pendingMasks.length])
+
+    // 2. 获取当前图片的mask
+    const currentMasks = imageMasks.get(currentFileIndex) || []
+
+    // 3. 如果当前图片没有mask，且不是第一张图片，尝试应用第一张图片的mask作为模板
+    if (currentMasks.length === 0 && currentFileIndex > 0) {
+      const templateMasks = imageMasks.get(0) || []
+
+      if (templateMasks.length > 0) {
+        // 复制第一张图片的mask到当前图片
+        setImageMasks(prev => {
+          const updated = new Map(prev)
+          // 深拷贝mask数组，避免引用共享
+          updated.set(currentFileIndex, [...templateMasks])
+          return updated
+        })
+        setShowBatchButton(true)
+        return // 提前返回，不执行下面的代码
+      }
+    }
+
+    // 4. 根据当前mask数量设置批处理按钮状态
+    setShowBatchButton(currentMasks.length > 0)
+  }, [currentFileIndex, imageMasks, setImageMasks])
 
   // Draw函数 - 调用CanvasEditor的draw方法
   const draw = useCallback(
